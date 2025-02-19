@@ -4,20 +4,16 @@ import pdfplumber
 from sentence_transformers import SentenceTransformer
 from deep_translator import GoogleTranslator
 
-# Load secrets
+
 PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
 PINECONE_ENV = st.secrets["PINECONE_ENV"]
 PINECONE_INDEX_NAME = st.secrets["PINECONE_INDEX_NAME"]
 
-if PINECONE_INDEX_NAME:
-    index = pc.Index(PINECONE_INDEX_NAME)
-else:
-    raise ValueError("PINECONE_INDEX_NAME is not set in Streamlit secrets!")
+
     
-# Load Hugging Face embedding model (1536 dimensions)
+
 model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
-# Streamlit UI
 st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk</h1>", unsafe_allow_html=True)
 
 pdf_file = st.sidebar.file_uploader("Upload a legal document (PDF)", type=["pdf"])
@@ -37,7 +33,7 @@ if pdf_file:
 else:
     doc_text = ""
 
-# Language selection
+
 input_lang = st.radio("Choose Input Language", ["English", "Arabic"], index=0)
 response_lang = st.radio("Choose Response Language", ["English", "Arabic"], index=0)
 
@@ -52,17 +48,17 @@ if st.button("Get Answer"):
         # Translate query if needed
         translated_query = GoogleTranslator(source="auto", target="en").translate(query)
 
-        # Generate embedding for the query
+        
         query_embedding = model.encode(translated_query).tolist()
 
-        # Retrieve relevant chunks
+        
         results = index.query(query_embedding, top_k=5, include_metadata=True)
 
         if results["matches"]:
             matched_texts = [match["metadata"]["text"] for match in results["matches"]]
             response = "\n\n".join(matched_texts)
 
-            # Translate response if needed
+            
             if response_lang == "Arabic":
                 response = GoogleTranslator(source="auto", target="ar").translate(response)
                 st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
