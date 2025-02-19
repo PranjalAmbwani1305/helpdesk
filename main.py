@@ -11,8 +11,7 @@ PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
 PINECONE_ENV = st.secrets["PINECONE_ENV"]
 PINECONE_INDEX_NAME = st.secrets["PINECONE_INDEX_NAME"]
 
-# Initialize Pinecone
-pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
+
 if PINECONE_INDEX_NAME not in pinecone.list_indexes():
     pinecone.create_index(PINECONE_INDEX_NAME, dimension=1536, metric="cosine")
 index = pinecone.Index(PINECONE_INDEX_NAME)
