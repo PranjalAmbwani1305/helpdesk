@@ -1,15 +1,32 @@
 import streamlit as st
 import pinecone
+import torch
 import PyPDF2
 import os
 from dotenv import load_dotenv
 from deep_translator import GoogleTranslator  
+from sentence_transformers import SentenceTransformer
 
+# Load environment variables
 load_dotenv()
+
+# Initialize Hugging Face model for embeddings
+HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
+HUGGINGFACE_MODEL = os.getenv("HUGGINGFACE_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+embed_model = SentenceTransformer(HUGGINGFACE_MODEL)
 
 # Initialize Pinecone
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-# Function to process PDF and extract text
+PINECONE_ENV = os.getenv("PINECONE_ENV")
+PINECONE_INDEX = os.getenv("PINECONE_INDEX")
+pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
+
+# Ensure the index exists
+if PINECONE_INDEX not in pinecone.list_indexes():
+    pinecone.create_index(PINECONE_INDEX, dimension=384, metric="cosine")  # Adjust based on model's output
+index = pinecone.Index(PINECONE_INDEX)
+
+# Function to process PDFs into chunks
 def process_pdf(pdf_path, chunk_size=500):
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
@@ -18,25 +35,47 @@ def process_pdf(pdf_path, chunk_size=500):
     chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
     return chunks
 
-# Function to store PDF in local directory
+# Function to store PDFs locally
 def store_pdf(pdf_name, pdf_data):
-    pdf_path = os.path.join("stored_pdfs", pdf_name)
+    pdf_dir = "stored_pdfs"
+    os.makedirs(pdf_dir, exist_ok=True)
+    pdf_path = os.path.join(pdf_dir, pdf_name)
     with open(pdf_path, "wb") as f:
         f.write(pdf_data)
 
 # Function to list stored PDFs
 def list_stored_pdfs():
-    if not os.path.exists("stored_pdfs"):
-        os.makedirs("stored_pdfs")
-    return [f for f in os.listdir("stored_pdfs") if f.endswith(".pdf")]
+    pdf_dir = "stored_pdfs"
+    if not os.path.exists(pdf_dir):
+        os.makedirs(pdf_dir)
+    return [f for f in os.listdir(pdf_dir) if f.endswith(".pdf")]
+
+# Function to generate embeddings and store them in Pinecone
+def store_vectors(chunks, pdf_name):
+    vectors = []
+    for i, chunk in enumerate(chunks):
+        embedding = embed_model.encode(chunk).tolist()
+        vectors.append((f"{pdf_name}-{i}", embedding, {"pdf_name": pdf_name, "text": chunk}))
+    index.upsert(vectors)
+
+# Function to query Pinecone and retrieve relevant text chunks
+def query_vectors(query, selected_pdf):
+    query_embedding = embed_model.encode(query).tolist()
+    
+    results = index.query(vector=query_embedding, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
+    
+    if results["matches"]:
+        matched_texts = [match["metadata"]["text"] for match in results["matches"]]
+        return "\n\n".join(matched_texts)
+    else:
+        return "No relevant information found in the selected document."
 
 # Function to translate text
 def translate_text(text, target_language):
     return GoogleTranslator(source="auto", target=target_language).translate(text)
 
-st.markdown("""
-    <h1 style='text-align: center;'>AI-Powered Legal HelpDesk</h1>
-""", unsafe_allow_html=True)
+# Streamlit UI
+st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk</h1>", unsafe_allow_html=True)
 
 st.sidebar.header("📂 Stored PDFs")
 pdf_list = list_stored_pdfs()
@@ -55,7 +94,11 @@ if pdf_source == "Upload from PC":
     if uploaded_file:
         pdf_path = os.path.join("stored_pdfs", uploaded_file.name)
         store_pdf(uploaded_file.name, uploaded_file.read())
-        st.success("PDF uploaded and stored locally!")
+
+        chunks = process_pdf(pdf_path)
+        store_vectors(chunks, uploaded_file.name)
+
+        st.success("PDF uploaded and processed!")
         selected_pdf = uploaded_file.name
 
 elif pdf_source == "Choose from the Document Storage":
@@ -83,10 +126,9 @@ else:
 
 if st.button("Get Answer"):
     if selected_pdf and query:
-        pdf_path = os.path.join("stored_pdfs", selected_pdf)
-        pdf_chunks = process_pdf(pdf_path)
-        response = "\n".join(pdf_chunks[:3])  # Mock response with first few chunks
-        
+        detected_lang = GoogleTranslator(source="auto", target="en").translate(query)
+        response = query_vectors(detected_lang, selected_pdf)
+
         if response_lang == "Arabic":
             response = translate_text(response, "ar")
             st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
@@ -94,4 +136,3 @@ if st.button("Get Answer"):
             st.write(f"**Answer:** {response}")
     else:
         st.warning("Please enter a query and select a PDF.")
-
