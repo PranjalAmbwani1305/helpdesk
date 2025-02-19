@@ -24,7 +24,7 @@ if index_name not in pc.list_indexes().names():
         metric="cosine"
     )
 
-index = Pinecone(index_name=index_name, embedding_function=HuggingFaceEmbeddings(model_name="BAAI/bge-base-en""))
+index = Pinecone(index_name=index_name, embedding_function=HuggingFaceEmbeddings(model_name="BAAI/bge-base-en"))
 
 
 pdf_storage = {}
