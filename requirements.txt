@@ -5,4 +5,5 @@ pdfplumber
 python-dotenv
 deep-translator
 transformers
+PyPDF2
 sentence-transformers
