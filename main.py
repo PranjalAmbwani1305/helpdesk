@@ -20,8 +20,10 @@ index_name = "desk"
 if index_name not in pc.list_indexes().names():
     pc.create_index(
         name=index_name,
-        spec=ServerlessSpec(cloud="aws", region="us-east-1")  
+        dimension=1536,  
+        metric="cosine"
     )
+
 index = pc.Index(index_name)
 
 openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
