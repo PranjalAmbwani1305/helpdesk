@@ -14,12 +14,12 @@ PINECONE_ENV = os.getenv("PINECONE_ENV")
 
 # Initialize Pinecone
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
-index_name = "pdf-qna"
+index_name = "helpdesk"
 
 if index_name not in pc.list_indexes().names():
     pc.create_index(
         name=index_name,
-        dimension=768,  # For sentence-transformers embeddings
+        dimension=1536,  # For sentence-transformers embeddings
         metric="cosine"
     )
 
