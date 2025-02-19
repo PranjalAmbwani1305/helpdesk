@@ -3,8 +3,6 @@ import pinecone
 import openai
 import PyPDF2
 import os
-import pytesseract
-from pdf2image import convert_from_path
 from dotenv import load_dotenv
 from deep_translator import GoogleTranslator  
 
@@ -24,19 +22,11 @@ index = pc.Index(index_name)
 
 openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-def extract_text_with_ocr(pdf_path):
-    images = convert_from_path(pdf_path)
-    text = " ".join([pytesseract.image_to_string(image) for image in images])
-    return text
-
 def process_pdf(pdf_path, chunk_size=500):
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
         text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
-
-    if not text.strip():
-        text = extract_text_with_ocr(pdf_path)
-
+    
     chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
     return chunks
 
