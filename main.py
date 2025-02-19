@@ -14,10 +14,15 @@ PINECONE_ENV = os.getenv("PINECONE_ENV")
 
 index_name = "helpdesk"
 
-if index_name not in pinecone.list_indexes():
-    pinecone.create_index(name=index_name, dimension=1536, metric="cosine")
+if index_name not in pc.list_indexes().names():
+    pc.create_index(
+        name=index_name,
+        dimension=1536,  
+        metric="cosine"
+    )
 
-index = pinecone.Index(index_name)
+index = pc.Index(index_name)
+
 
 # Load embedding model
 embed_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
