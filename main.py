@@ -6,19 +6,19 @@ import os
 from dotenv import load_dotenv
 from deep_translator import GoogleTranslator  
 
-# Load environment variables
+
 load_dotenv()
 
-# Pinecone API setup
+
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
 
 from pinecone import Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
-index_name = "helpdesk"
+index_name = "pdf-qna"
 index = pc.Index(index_name)
 
-# OpenAI API setup
+
 openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 def process_pdf(pdf_path, chunk_size=500):
@@ -67,16 +67,18 @@ def translate_text(text, target_language):
     """Translates text to the target language."""
     return GoogleTranslator(source="auto", target=target_language).translate(text)
 
-# Streamlit UI Setup
+
 st.markdown(
-    "<h1 style='text-align: center;'>AI-Powered Legal HelpDesk for Saudi Arabia</h1>",
+    "<h1 style='text-align: center;'> HelpDesk for Saudi Arabia</h1>",
     unsafe_allow_html=True
 )
 
-pdf_source = st.radio("Select PDF Source", ["Upload from PC", "Choose from the Document Storage in sidebar"])
+
+st.sidebar.header("Document Selection")
+pdf_source = st.sidebar.radio("Select PDF Source", ["Upload from PC", "Choose from Document Storage"])
 
 if pdf_source == "Upload from PC":
-    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
+    uploaded_file = st.sidebar.file_uploader("Upload a PDF", type=["pdf"])
     if uploaded_file:
         temp_pdf_path = f"temp_{uploaded_file.name}"
         with open(temp_pdf_path, "wb") as f:
@@ -84,15 +86,17 @@ if pdf_source == "Upload from PC":
 
         chunks = process_pdf(temp_pdf_path)
         store_vectors(chunks, uploaded_file.name)
-        st.success("PDF uploaded and processed!")
+        st.sidebar.success("PDF uploaded and processed!")
 
 selected_pdf = uploaded_file.name if uploaded_file else None
 
-# Language Selection
-input_lang = st.radio("Choose Input Language", ["English", "Arabic"], index=0)
-response_lang = st.radio("Choose Response Language", ["English", "Arabic"], index=0)
 
-# Query Input
+st.sidebar.header("Language Settings")
+input_lang = st.sidebar.radio("Choose Input Language", ["English", "Arabic"], index=0)
+response_lang = st.sidebar.radio("Choose Response Language", ["English", "Arabic"], index=0)
+
+
+st.header("Ask a Legal Question")
 if input_lang == "Arabic":
     query = st.text_input("اسأل سؤالاً (باللغة العربية أو الإنجليزية):", key="query_input")
     st.markdown(
@@ -109,7 +113,7 @@ if input_lang == "Arabic":
 else:
     query = st.text_input("Ask a question (in English or Arabic):", key="query_input")
 
-# Query Processing
+
 if st.button("Get Answer"):
     if selected_pdf and query:
         detected_lang = GoogleTranslator(source="auto", target="en").translate(query)
