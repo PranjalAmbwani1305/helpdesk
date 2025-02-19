@@ -10,14 +10,14 @@ load_dotenv()
 
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
-INDEX_NAME = "pdf-qna"
+INDEX_NAME = "helpdesk"
 
 model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
 from pinecone import Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
 
-index = pc.Index(INDEX_NAME)
+index = INDEX_NAME
 
 def process_pdf(pdf_path, chunk_size=500):
     with open(pdf_path, "rb") as file:
