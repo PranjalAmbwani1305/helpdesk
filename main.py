@@ -1,94 +1,113 @@
 import streamlit as st
 import os
 import PyPDF2
-from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
-from deep_translator import GoogleTranslator  
+import pickle
+from deep_translator import GoogleTranslator
 
-# Load environment variables
-load_dotenv()
+# Load secrets
+HUGGINGFACE_API_KEY = st.secrets["HUGGINGFACE_API_KEY"]
 
-# Hugging Face Model
-EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-model = SentenceTransformer(EMBEDDING_MODEL)
+# Directory for storing PDFs
+PDF_STORAGE_DIR = "pdf_repository"
+if not os.path.exists(PDF_STORAGE_DIR):
+    os.makedirs(PDF_STORAGE_DIR)
 
-# Storage dictionary for PDFs and text (replace with database if needed)
-pdf_storage = {}
+# Load Sentence Transformer (1536-dim model)
+model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
-# Function to process PDF and extract text
-def process_pdf(uploaded_file):
+# Function to extract text from PDF
+def extract_text_from_pdf(pdf_path):
     text = ""
-    reader = PyPDF2.PdfReader(uploaded_file)
-    for page in reader.pages:
-        if page.extract_text():
-            text += page.extract_text() + "\n"
+    with open(pdf_path, "rb") as file:
+        reader = PyPDF2.PdfReader(file)
+        for page in reader.pages:
+            extracted_text = page.extract_text()
+            if extracted_text:
+                text += extracted_text + "\n"
     return text
 
-# Function to get embeddings
-def get_embedding(text):
-    return model.encode(text).tolist()
+# Function to store PDF text embeddings
+def store_pdf_embeddings(pdf_name, pdf_text):
+    embeddings = model.encode(pdf_text, convert_to_tensor=False)
+    storage_path = os.path.join(PDF_STORAGE_DIR, f"{pdf_name}.pkl")
+    with open(storage_path, "wb") as f:
+        pickle.dump({"text": pdf_text, "embeddings": embeddings}, f)
 
-# Function to translate text
-def translate_text(text, target_language):
-    return GoogleTranslator(source="auto", target=target_language).translate(text)
+# Function to check if a PDF is already stored
+def is_pdf_stored(pdf_name):
+    return os.path.exists(os.path.join(PDF_STORAGE_DIR, f"{pdf_name}.pkl"))
 
-# Streamlit UI
+# Function to load stored PDF embeddings
+def load_pdf_embeddings(pdf_name):
+    storage_path = os.path.join(PDF_STORAGE_DIR, f"{pdf_name}.pkl")
+    with open(storage_path, "rb") as f:
+        return pickle.load(f)
+
+# UI Title
 st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk</h1>", unsafe_allow_html=True)
 
-# Sidebar for PDF uploads
+# Sidebar for stored PDFs
 st.sidebar.header("📂 Stored PDFs")
-if pdf_storage:
-    with st.sidebar.expander("📜 View Stored PDFs", expanded=False):
-        for pdf in pdf_storage.keys():
-            st.sidebar.write(f"📄 {pdf}")
+stored_pdfs = [f.replace(".pkl", "") for f in os.listdir(PDF_STORAGE_DIR) if f.endswith(".pkl")]
+if stored_pdfs:
+    selected_pdf = st.sidebar.selectbox("Choose a stored PDF", stored_pdfs)
 else:
-    st.sidebar.write("No PDFs stored yet. Upload one!")
+    selected_pdf = None
 
-# PDF Upload
+# File Upload Section
 uploaded_file = st.file_uploader("Upload a legal document (PDF)", type=["pdf"])
 
 if uploaded_file:
     pdf_name = uploaded_file.name
-    if pdf_name not in pdf_storage:
-        pdf_text = process_pdf(uploaded_file)
-        pdf_storage[pdf_name] = pdf_text
-        st.success(f"PDF '{pdf_name}' uploaded and stored successfully!")
+    pdf_path = os.path.join(PDF_STORAGE_DIR, pdf_name)
+
+    # Store PDF if not already stored
+    if not is_pdf_stored(pdf_name):
+        with open(pdf_path, "wb") as f:
+            f.write(uploaded_file.read())
+
+        pdf_text = extract_text_from_pdf(pdf_path)
+        store_pdf_embeddings(pdf_name, pdf_text)
+        st.success("PDF uploaded, processed, and stored!")
     else:
-        st.info(f"PDF '{pdf_name}' already exists in storage.")
+        st.info("PDF is already stored.")
 
-# Select PDF for querying
-if pdf_storage:
-    selected_pdf = st.selectbox("Select a stored PDF for querying", list(pdf_storage.keys()))
-else:
-    selected_pdf = None
-
-# Input and Output Language Selection
+# Choose input & response language
 input_lang = st.radio("Choose Input Language", ["English", "Arabic"], index=0)
 response_lang = st.radio("Choose Response Language", ["English", "Arabic"], index=0)
 
-# Query Input
+# User Query
 if input_lang == "Arabic":
-    query = st.text_input("اسأل سؤالاً (باللغة العربية أو الإنجليزية):", key="query_input")
-    st.markdown("<style>.stTextInput>div>div>input { direction: rtl; text-align: right; }</style>", unsafe_allow_html=True)
+    query = st.text_input("اسأل سؤالاً (باللغة العربية أو الإنجليزية):")
+    st.markdown("<style>.stTextInput>div>div>input {direction: rtl; text-align: right;}</style>", unsafe_allow_html=True)
 else:
-    query = st.text_input("Ask a question (in English or Arabic):", key="query_input")
+    query = st.text_input("Ask a question (in English or Arabic):")
 
-# Answer Generation
-if st.button("Get Answer") and selected_pdf and query:
-    document_text = pdf_storage[selected_pdf]
+# Process query
+if st.button("Get Answer"):
+    if selected_pdf and query:
+        # Load stored PDF text and embeddings
+        pdf_data = load_pdf_embeddings(selected_pdf)
+        pdf_text = pdf_data["text"]
+        pdf_embeddings = pdf_data["embeddings"]
 
-    # Generate query embedding
-    query_embedding = get_embedding(query)
+        # Get query embedding
+        query_embedding = model.encode(query, convert_to_tensor=False)
 
-    # Simple text retrieval (replace with actual NLP-based retrieval)
-    sentences = document_text.split("\n")
-    relevant_text = "\n".join(sentences[:5])  # Taking first 5 lines as an example
+        # Find the most relevant passage using cosine similarity
+        from sklearn.metrics.pairwise import cosine_similarity
+        similarity_scores = cosine_similarity([query_embedding], [pdf_embeddings])[0]
+        best_match_index = similarity_scores.argmax()
 
-    response = f"Based on '{selected_pdf}', here is the relevant legal information:\n\n{relevant_text}"
+        # Retrieve best matching text snippet
+        matched_text = pdf_text.split("\n")[best_match_index]
 
-    # Translate response if needed
-    if response_lang == "Arabic":
-        response = translate_text(response, "ar")
-        st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
+        # Translate response if needed
+        if response_lang == "Arabic":
+            matched_text = GoogleTranslator(source="auto", target="ar").translate(matched_text)
+            st.markdown(f"<div dir='rtl' style='text-align: right;'>{matched_text}</div>", unsafe_allow_html=True)
+        else:
+            st.write(f"**Answer:** {matched_text}")
     else:
-        st.write(f"**Answer:** {response}")
+        st.warning("Please enter a query and select a stored PDF.")
