@@ -17,7 +17,7 @@ model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 from pinecone import Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
 
-index = INDEX_NAME
+index = pc.Index(INDEX_NAME)
 
 def process_pdf(pdf_path, chunk_size=500):
     with open(pdf_path, "rb") as file:
