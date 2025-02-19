@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from deep_translator import GoogleTranslator  
 from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.vectorstores import Pinecone
+from pinecone import Pinecone
 
 load_dotenv()
 
@@ -13,7 +14,7 @@ PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
 
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
-index_name = "pdf-qna"
+index_name = "helpdesk"
 
 if index_name not in pc.list_indexes().names():
     pc.create_index(
