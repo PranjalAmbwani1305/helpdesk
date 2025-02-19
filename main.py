@@ -3,7 +3,8 @@ import pinecone
 import PyPDF2
 import os
 from dotenv import load_dotenv
-from deep_translator import GoogleTranslator  from langchain_community.embeddings import HuggingFaceEmbeddings
+from deep_translator import GoogleTranslator 
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Pinecone
 
 from pinecone import Pinecone
