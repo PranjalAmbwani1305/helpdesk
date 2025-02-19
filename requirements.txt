@@ -1,0 +1,6 @@
+streamlit
+pinecone-client
+openai
+pypdf2
+python-dotenv
+deep-translator
