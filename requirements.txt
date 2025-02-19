@@ -1,7 +1,7 @@
 streamlit
 pinecone-client
 openai
-pypdf2
+pdfplumber
 python-dotenv
 deep-translator
 transformers
