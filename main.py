@@ -15,7 +15,7 @@ INDEX_NAME = "help-desk"
 from pinecone import Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
 
-index = pc.Index(INDEX_NAME)
+index = INDEX_NAME
 
 openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
