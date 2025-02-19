@@ -4,7 +4,8 @@ import os
 import PyPDF2
 from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
-from deep_translator import GoogleTranslator  
+from deep_translator import GoogleTranslator
+from pinecone import Pinecone
 
 # Load environment variables
 load_dotenv()
