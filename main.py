@@ -1,76 +1,94 @@
 import streamlit as st
-import pinecone
-import pdfplumber
 import os
+import PyPDF2
+from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
-from deep_translator import GoogleTranslator
+from deep_translator import GoogleTranslator  
 
-# Load API Keys from Streamlit Secrets
-HUGGINGFACE_API_KEY = st.secrets["HUGGINGFACE_API_KEY"]
-PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
-PINECONE_ENV = st.secrets["PINECONE_ENV"]
-PINECONE_INDEX_NAME = st.secrets["PINECONE_INDEX_NAME"]
+# Load environment variables
+load_dotenv()
 
+# Hugging Face Model
+EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+model = SentenceTransformer(EMBEDDING_MODEL)
 
-if PINECONE_INDEX_NAME not in list_indexes():
-    pinecone.create_index(PINECONE_INDEX_NAME, dimension=1536, metric="cosine")
-index = pinecone.Index(PINECONE_INDEX_NAME)
+# Storage dictionary for PDFs and text (replace with database if needed)
+pdf_storage = {}
 
-# Load Hugging Face Model for Embeddings
-model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-
-# Streamlit App UI
-st.set_page_config(page_title="AI-Powered Legal HelpDesk", layout="wide")
-st.markdown("<h1 style='text-align: center;'>📜 AI-Powered Legal HelpDesk</h1>", unsafe_allow_html=True)
-
-# Sidebar for PDF Upload
-st.sidebar.header("📂 Upload & Stored PDFs")
-uploaded_file = st.sidebar.file_uploader("Upload a legal document (PDF)", type=["pdf"])
-
-# Function to Extract Text from PDF
-def extract_text_from_pdf(uploaded_file):
+# Function to process PDF and extract text
+def process_pdf(uploaded_file):
     text = ""
-    with pdfplumber.open(uploaded_file) as pdf:
-        for page in pdf.pages:
+    reader = PyPDF2.PdfReader(uploaded_file)
+    for page in reader.pages:
+        if page.extract_text():
             text += page.extract_text() + "\n"
     return text
 
-# Function to Check if PDF Exists in Pinecone
-def pdf_exists(pdf_name):
-    query_results = index.query(vector=[0]*1536, top_k=1, include_metadata=True, filter={"pdf_name": {"$eq": pdf_name}})
-    return len(query_results["matches"]) > 0
+# Function to get embeddings
+def get_embedding(text):
+    return model.encode(text).tolist()
 
-# Function to Store PDF in Pinecone
-def store_pdf_in_pinecone(pdf_name, text):
-    chunks = [text[i:i+500] for i in range(0, len(text), 500)]
-    for i, chunk in enumerate(chunks):
-        vector = model.encode(chunk).tolist()
-        index.upsert([(f"{pdf_name}-chunk-{i}", vector, {"pdf_name": pdf_name, "text": chunk})])
+# Function to translate text
+def translate_text(text, target_language):
+    return GoogleTranslator(source="auto", target=target_language).translate(text)
 
-# Process PDF if Uploaded
+# Streamlit UI
+st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk</h1>", unsafe_allow_html=True)
+
+# Sidebar for PDF uploads
+st.sidebar.header("📂 Stored PDFs")
+if pdf_storage:
+    with st.sidebar.expander("📜 View Stored PDFs", expanded=False):
+        for pdf in pdf_storage.keys():
+            st.sidebar.write(f"📄 {pdf}")
+else:
+    st.sidebar.write("No PDFs stored yet. Upload one!")
+
+# PDF Upload
+uploaded_file = st.file_uploader("Upload a legal document (PDF)", type=["pdf"])
+
 if uploaded_file:
-    pdf_text = extract_text_from_pdf(uploaded_file)
     pdf_name = uploaded_file.name
-    
-    if not pdf_exists(pdf_name):
-        store_pdf_in_pinecone(pdf_name, pdf_text)
-        st.sidebar.success("✅ PDF uploaded and stored successfully!")
+    if pdf_name not in pdf_storage:
+        pdf_text = process_pdf(uploaded_file)
+        pdf_storage[pdf_name] = pdf_text
+        st.success(f"PDF '{pdf_name}' uploaded and stored successfully!")
     else:
-        st.sidebar.info("📌 PDF already exists in the database.")
+        st.info(f"PDF '{pdf_name}' already exists in storage.")
 
-# Input Query
-query = st.text_input("🔍 Ask a legal question:")
+# Select PDF for querying
+if pdf_storage:
+    selected_pdf = st.selectbox("Select a stored PDF for querying", list(pdf_storage.keys()))
+else:
+    selected_pdf = None
 
-if st.button("Get Answer"):
-    if query and uploaded_file:
-        query_embedding = model.encode(query).tolist()
-        results = index.query(query_embedding, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": uploaded_file.name}})
-        
-        if results["matches"]:
-            st.write("### 📝 Relevant Legal Information:")
-            for match in results["matches"]:
-                st.write(f"- {match['metadata']['text']}")
-        else:
-            st.warning("⚠️ No relevant information found in the selected document.")
+# Input and Output Language Selection
+input_lang = st.radio("Choose Input Language", ["English", "Arabic"], index=0)
+response_lang = st.radio("Choose Response Language", ["English", "Arabic"], index=0)
+
+# Query Input
+if input_lang == "Arabic":
+    query = st.text_input("اسأل سؤالاً (باللغة العربية أو الإنجليزية):", key="query_input")
+    st.markdown("<style>.stTextInput>div>div>input { direction: rtl; text-align: right; }</style>", unsafe_allow_html=True)
+else:
+    query = st.text_input("Ask a question (in English or Arabic):", key="query_input")
+
+# Answer Generation
+if st.button("Get Answer") and selected_pdf and query:
+    document_text = pdf_storage[selected_pdf]
+
+    # Generate query embedding
+    query_embedding = get_embedding(query)
+
+    # Simple text retrieval (replace with actual NLP-based retrieval)
+    sentences = document_text.split("\n")
+    relevant_text = "\n".join(sentences[:5])  # Taking first 5 lines as an example
+
+    response = f"Based on '{selected_pdf}', here is the relevant legal information:\n\n{relevant_text}"
+
+    # Translate response if needed
+    if response_lang == "Arabic":
+        response = translate_text(response, "ar")
+        st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
     else:
-        st.warning("📌 Please upload a PDF and enter a question.")
+        st.write(f"**Answer:** {response}")
