@@ -2,11 +2,9 @@ import streamlit as st
 import pinecone
 import pdfplumber
 from sentence_transformers import SentenceTransformer
-import os
-import json
+from deep_translator import GoogleTranslator
 
-# Load API keys from secrets
-HUGGINGFACE_API_KEY = st.secrets["HUGGINGFACE_API_KEY"]
+# Load secrets
 PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
 PINECONE_ENV = st.secrets["PINECONE_ENV"]
 PINECONE_INDEX_NAME = st.secrets["PINECONE_INDEX_NAME"]
@@ -15,53 +13,61 @@ PINECONE_INDEX_NAME = st.secrets["PINECONE_INDEX_NAME"]
 pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
 index = pinecone.Index(PINECONE_INDEX_NAME)
 
-# Load Sentence Transformer model
+# Load Hugging Face embedding model (1536 dimensions)
 model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
-st.set_page_config(page_title="AI-Powered Legal Helpdesk", layout="wide")
-st.markdown("<h1 style='text-align: center;'>AI-Powered Legal Helpdesk</h1>", unsafe_allow_html=True)
+# Streamlit UI
+st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk</h1>", unsafe_allow_html=True)
 
-# Function to extract text from PDF
+pdf_file = st.sidebar.file_uploader("Upload a legal document (PDF)", type=["pdf"])
+
 def extract_text_from_pdf(uploaded_file):
     text = ""
     with pdfplumber.open(uploaded_file) as pdf:
         for page in pdf.pages:
-            if page.extract_text():
-                text += page.extract_text() + "\n"
+            extracted = page.extract_text()
+            if extracted:
+                text += extracted + "\n"
     return text
-
-# Function to split text into chunks
-def chunk_text(text, chunk_size=500):
-    return [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
-
-# Sidebar - Upload PDF
-pdf_file = st.sidebar.file_uploader("Upload a legal document (PDF)", type=["pdf"])
 
 if pdf_file:
     doc_text = extract_text_from_pdf(pdf_file)
-    chunks = chunk_text(doc_text)
-    
     st.sidebar.success("PDF uploaded and processed successfully!")
-    
-    # Store embeddings in Pinecone
-    for i, chunk in enumerate(chunks):
-        embedding = model.encode(chunk).tolist()
-        index.upsert([(f"{pdf_file.name}-chunk-{i}", embedding, {"text": chunk})])
-        
-    st.sidebar.info("Document indexed successfully!")
 else:
-    chunks = []
+    doc_text = ""
 
-# Query input
-query = st.text_input("Ask your legal question:")
+# Language selection
+input_lang = st.radio("Choose Input Language", ["English", "Arabic"], index=0)
+response_lang = st.radio("Choose Response Language", ["English", "Arabic"], index=0)
 
-if st.button("Get Answer") and query:
-    query_embedding = model.encode(query).tolist()
-    result = index.query(query_embedding, top_k=5, include_metadata=True)
-    
-    if "matches" in result and result["matches"]:
-        st.write("### Relevant Legal Information:")
-        for match in result["matches"]:
-            st.write(f"- {match['metadata']['text']}")
+if input_lang == "Arabic":
+    query = st.text_input("اسأل سؤالاً (باللغة العربية أو الإنجليزية):", key="query_input")
+    st.markdown("<style>.stTextInput>div>div>input { direction: rtl; text-align: right; }</style>", unsafe_allow_html=True)
+else:
+    query = st.text_input("Ask a question (in English or Arabic):", key="query_input")
+
+if st.button("Get Answer"):
+    if doc_text and query:
+        # Translate query if needed
+        translated_query = GoogleTranslator(source="auto", target="en").translate(query)
+
+        # Generate embedding for the query
+        query_embedding = model.encode(translated_query).tolist()
+
+        # Retrieve relevant chunks
+        results = index.query(query_embedding, top_k=5, include_metadata=True)
+
+        if results["matches"]:
+            matched_texts = [match["metadata"]["text"] for match in results["matches"]]
+            response = "\n\n".join(matched_texts)
+
+            # Translate response if needed
+            if response_lang == "Arabic":
+                response = GoogleTranslator(source="auto", target="ar").translate(response)
+                st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
+            else:
+                st.write(f"**Answer:** {response}")
+        else:
+            st.warning("No relevant information found in the document.")
     else:
-        st.warning("No relevant information found.")
+        st.warning("Please enter a query and upload a PDF.")
