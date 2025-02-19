@@ -10,15 +10,12 @@ load_dotenv()
 
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
+INDEX_NAME = "help-desk"  
 
 from pinecone import Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
-index_name = "pdf-qna"
 
-if index_name not in pc.list_indexes().names():
-    pc.create_index(name=index_name, dimension=1536, metric="cosine")
-
-index = pc.Index(index_name)
+index = pc.Index(INDEX_NAME)
 
 openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
