@@ -4,3 +4,4 @@ openai
 pypdf2
 python-dotenv
 deep-translator
+sentence-transformers
