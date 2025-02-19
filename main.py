@@ -134,4 +134,17 @@ if st.button("Get Answer"):
 
         # Find the most relevant passage using cosine similarity
         from sklearn.metrics.pairwise import cosine_similarity
-        similarity_scores = cosine_similarity([query_embedding], [pdf_e
+        similarity_scores = cosine_similarity([query_embedding], [pdf_embeddings])[0]
+        best_match_index = similarity_scores.argmax()
+
+        # Retrieve best matching text snippet
+        matched_text = pdf_text.split("\n")[best_match_index]
+
+        # Translate response if needed
+        if response_lang == "Arabic":
+            matched_text = GoogleTranslator(source="auto", target="ar").translate(matched_text)
+            st.markdown(f"<div dir='rtl' style='text-align: right;'>{matched_text}</div>", unsafe_allow_html=True)
+        else:
+            st.write(f"**Answer:** {matched_text}")
+    else:
+        st.warning("Please enter a query and select a stored PDF.")
