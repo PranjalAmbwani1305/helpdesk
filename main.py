@@ -16,13 +16,11 @@ from pinecone import Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "desk"
 
+
 if index_name not in pc.list_indexes().names():
     pc.create_index(
         name=index_name,
-        spec=ServerlessSpec(
-            cloud="aws",
-            region="us-east-1"
-        )
+        spec=ServerlessSpec(cloud="aws", region="us-east-1")  
     )
 index = pc.Index(index_name)
 
