@@ -21,7 +21,7 @@ PINECONE_ENV = os.getenv("PINECONE_ENV")
 PINECONE_INDEX = os.getenv("PINECONE_INDEX")
 
 # Connect to existing index
-index = pinecone.Index(PINECONE_INDEX)
+index = pc.Index(PINECONE_INDEX)
 
 # Function to process PDFs into chunks
 def process_pdf(pdf_path, chunk_size=500):
