@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from deep_translator import GoogleTranslator  
 from sentence_transformers import SentenceTransformer
 
-
+# Load environment variables
 load_dotenv()
 
 
@@ -19,17 +19,12 @@ embed_model = SentenceTransformer(HUGGINGFACE_MODEL)
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
 PINECONE_INDEX = os.getenv("PINECONE_INDEX")
+pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
 
-if index_name not in pc.list_indexes().names():
-    pc.create_index(
-        name=index_name,
-        dimension=1536,  
-        metric="cosine"
-    )
+# Connect to existing index
+index = pinecone.Index(PINECONE_INDEX)
 
-index = pc.Index(index_name)
-
-
+# Function to process PDFs into chunks
 def process_pdf(pdf_path, chunk_size=500):
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
@@ -38,7 +33,7 @@ def process_pdf(pdf_path, chunk_size=500):
     chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
     return chunks
 
-
+# Function to store PDFs locally
 def store_pdf(pdf_name, pdf_data):
     pdf_dir = "stored_pdfs"
     os.makedirs(pdf_dir, exist_ok=True)
@@ -52,14 +47,6 @@ def list_stored_pdfs():
     if not os.path.exists(pdf_dir):
         os.makedirs(pdf_dir)
     return [f for f in os.listdir(pdf_dir) if f.endswith(".pdf")]
-
-# Function to generate embeddings and store them in Pinecone
-def store_vectors(chunks, pdf_name):
-    vectors = []
-    for i, chunk in enumerate(chunks):
-        embedding = embed_model.encode(chunk).tolist()
-        vectors.append((f"{pdf_name}-{i}", embedding, {"pdf_name": pdf_name, "text": chunk}))
-    index.upsert(vectors)
 
 # Function to query Pinecone and retrieve relevant text chunks
 def query_vectors(query, selected_pdf):
@@ -97,11 +84,7 @@ if pdf_source == "Upload from PC":
     if uploaded_file:
         pdf_path = os.path.join("stored_pdfs", uploaded_file.name)
         store_pdf(uploaded_file.name, uploaded_file.read())
-
-        chunks = process_pdf(pdf_path)
-        store_vectors(chunks, uploaded_file.name)
-
-        st.success("PDF uploaded and processed!")
+        st.success("PDF uploaded and stored locally!")
         selected_pdf = uploaded_file.name
 
 elif pdf_source == "Choose from the Document Storage":
