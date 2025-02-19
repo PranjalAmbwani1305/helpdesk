@@ -11,7 +11,7 @@ load_dotenv()
 
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
-
+pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
 if index_name not in pc.list_indexes().names():
