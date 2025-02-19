@@ -18,7 +18,7 @@ embed_model = SentenceTransformer(HUGGINGFACE_MODEL)
 
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
-PINECONE_INDEX = os.getenv("PINECONE_INDEX")
+PINECONE_INDEX = "helpdesk"
 
 # Connect to existing index
 index = PINECONE_INDEX
