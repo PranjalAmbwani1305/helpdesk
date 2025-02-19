@@ -14,19 +14,19 @@ PINECONE_ENV = os.getenv("PINECONE_ENV")
 
 # Initialize Pinecone
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
-index_name = "helpdesk"
+index_name = "pdf-qna"
 
 if index_name not in pc.list_indexes().names():
     pc.create_index(
         name=index_name,
-        dimension=1536,  # For sentence-transformers embeddings
+        dimension=1536,  # Updated to 1536 dimensions
         metric="cosine"
     )
 
 index = pc.Index(index_name)
 
-# Load embedding model
-embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+# Load embedding model with 1536 dimensions
+embedding_model = SentenceTransformer("sentence-transformers/all-mpnet-base-v2")
 
 def process_pdf(pdf_path, chunk_size=500):
     """Extracts text from a PDF and splits it into chunks."""
