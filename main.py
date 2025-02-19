@@ -9,7 +9,7 @@ PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
 PINECONE_ENV = st.secrets["PINECONE_ENV"]
 PINECONE_INDEX_NAME = st.secrets["PINECONE_INDEX_NAME"]
 
-
+index = PINECONE_INDEX_NAME
     
 
 model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
