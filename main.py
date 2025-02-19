@@ -7,26 +7,29 @@ from dotenv import load_dotenv
 from deep_translator import GoogleTranslator  
 from sentence_transformers import SentenceTransformer
 
-# Load environment variables
+
 load_dotenv()
 
-# Initialize Hugging Face model for embeddings
+
 HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 HUGGINGFACE_MODEL = os.getenv("HUGGINGFACE_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 embed_model = SentenceTransformer(HUGGINGFACE_MODEL)
 
-# Initialize Pinecone
+
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
 PINECONE_INDEX = os.getenv("PINECONE_INDEX")
-pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
 
-# Ensure the index exists
-if PINECONE_INDEX not in pinecone.list_indexes():
-    pinecone.create_index(PINECONE_INDEX, dimension=384, metric="cosine")  # Adjust based on model's output
-index = pinecone.Index(PINECONE_INDEX)
+if index_name not in pc.list_indexes().names():
+    pc.create_index(
+        name=index_name,
+        dimension=1536,  
+        metric="cosine"
+    )
 
-# Function to process PDFs into chunks
+index = pc.Index(index_name)
+
+
 def process_pdf(pdf_path, chunk_size=500):
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
@@ -35,7 +38,7 @@ def process_pdf(pdf_path, chunk_size=500):
     chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
     return chunks
 
-# Function to store PDFs locally
+
 def store_pdf(pdf_name, pdf_data):
     pdf_dir = "stored_pdfs"
     os.makedirs(pdf_dir, exist_ok=True)
