@@ -1,23 +1,23 @@
 import streamlit as st
 import pinecone
-import openai
 import PyPDF2
 import os
 from dotenv import load_dotenv
 from deep_translator import GoogleTranslator  
+from sentence_transformers import SentenceTransformer  
 
 load_dotenv()
 
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
-INDEX_NAME = "help-desk"  
+INDEX_NAME = "pdf-qna"
+
+model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
 from pinecone import Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
 
-index = INDEX_NAME
-
-openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+index = pc.Index(INDEX_NAME)
 
 def process_pdf(pdf_path, chunk_size=500):
     with open(pdf_path, "rb") as file:
@@ -30,35 +30,21 @@ def process_pdf(pdf_path, chunk_size=500):
 def store_vectors(chunks, pdf_name):
     for i, chunk in enumerate(chunks):
         try:
-            vector = openai_client.embeddings.create(input=[chunk], model="text-embedding-ada-002").data[0].embedding
+            vector = model.encode(chunk).tolist()
             index.upsert([(f"{pdf_name}-doc-{i}", vector, {"pdf_name": pdf_name, "text": chunk})])
         except Exception as e:
             st.error(f"Vector storage failed: {str(e)}")
 
 def query_vectors(query, selected_pdf):
     try:
-        vector = openai_client.embeddings.create(input=[query], model="text-embedding-ada-002").data[0].embedding
+        vector = model.encode(query).tolist()
         results = index.query(vector=vector, top_k=7, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
 
         if results["matches"]:
             matched_texts = [match["metadata"]["text"] for match in results["matches"]]
             combined_text = "\n\n".join(matched_texts)
 
-            prompt = (
-                f"Based on the following legal document ({selected_pdf}), provide an accurate and well-reasoned answer:\n\n"
-                f"{combined_text}\n\n"
-                f"User's Question: {query}"
-            )
-
-            response = openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "You are an AI assistant specialized in legal analysis."},
-                    {"role": "user", "content": prompt}
-                ]
-            ).choices[0].message.content
-
-            return response
+            return combined_text
         else:
             return "No relevant information found in the selected document."
     except Exception as e:
@@ -77,7 +63,7 @@ pdf_source = st.sidebar.radio("Choose Source", ["Upload a Document", "Pick from 
 
 uploaded_file = None
 selected_pdf = None
-pdf_list = ["Sample_Law_Document.pdf"]  
+pdf_list = ["Sample_Law_Document.pdf"]
 
 if pdf_source == "Pick from Stored Documents":
     selected_pdf = st.sidebar.selectbox("Select a Document", pdf_list)
