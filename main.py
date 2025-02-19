@@ -24,7 +24,7 @@ if index_name not in pc.list_indexes().names():
         metric="cosine"
     )
 
-index = Pinecone.from_existing_index(index_name, HuggingFaceEmbeddings(model_name="mistralai/Mixtral-8x7B"))
+index = Pinecone.from_existing_index(index_name, embedding=HuggingFaceEmbeddings(model_name="mistralai/Mixtral-8x7B"))
 
 pdf_storage = {}
 
