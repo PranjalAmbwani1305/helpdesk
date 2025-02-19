@@ -1,11 +1,7 @@
 streamlit
 pinecone-client
-sentence-transformers
-pdfplumber
-PyPDF2
-pdfkit
-wkhtmltopdf
-requests
-beautifulsoup4
-deep-translator
+pypdf2
 python-dotenv
+deep-translator
+langchain
+sentence-transformers
