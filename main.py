@@ -15,7 +15,7 @@ PINECONE_ENV = os.getenv("PINECONE_ENV")
 
 from pinecone import Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
-index_name = "pdf-qna"
+index_name = "helpdesk"
 index = pc.Index(index_name)
 
 # OpenAI API setup
