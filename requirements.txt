@@ -4,4 +4,6 @@ pypdf2
 python-dotenv
 deep-translator
 langchain
+langchain.embeddings
+langchain.vectorstores
 sentence-transformers
