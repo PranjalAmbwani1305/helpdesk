@@ -12,12 +12,10 @@ load_dotenv()
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
 
-# Initialize Pinecone
-pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
-index_name = "pdf-qna"
+index_name = "helpdesk"
 
 if index_name not in pinecone.list_indexes():
-    pinecone.create_index(name=index_name, dimension=384, metric="cosine")
+    pinecone.create_index(name=index_name, dimension=1536, metric="cosine")
 
 index = pinecone.Index(index_name)
 
