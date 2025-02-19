@@ -20,11 +20,11 @@ index_name = "helpdesk"
 if index_name not in pc.list_indexes().names():
     pc.create_index(
         name=index_name,
-        dimension=768,  # Adjust based on embedding model
+        dimension=1536,  # Adjust based on embedding model
         metric="cosine"
     )
 
-index = Pinecone(index_name=index_name, embedding_function=HuggingFaceEmbeddings(model_name="mistralai/Mixtral-8x7B"))
+index = Pinecone(index_name=index_name, embedding_function=HuggingFaceEmbeddings(model_name="BAAI/bge-base-en""))
 
 
 pdf_storage = {}
