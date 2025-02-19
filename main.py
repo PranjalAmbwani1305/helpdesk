@@ -19,7 +19,6 @@ embed_model = SentenceTransformer(HUGGINGFACE_MODEL)
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
 PINECONE_INDEX = os.getenv("PINECONE_INDEX")
-pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
 
 # Connect to existing index
 index = pinecone.Index(PINECONE_INDEX)
