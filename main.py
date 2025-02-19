@@ -4,7 +4,8 @@ import PyPDF2
 import os
 from dotenv import load_dotenv
 from deep_translator import GoogleTranslator  
-from sentence_transformers import SentenceTransformer
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.vectorstores import Pinecone
 
 load_dotenv()
 
@@ -12,18 +13,16 @@ PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
 
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
-index_name = "helpdesk"
+index_name = "pdf-qna"
 
 if index_name not in pc.list_indexes().names():
     pc.create_index(
         name=index_name,
-        dimension=1536,  # Adjust based on embedding model
+        dimension=768,  # Adjust based on embedding model
         metric="cosine"
     )
 
-index = pc.Index(index_name)
-
-model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+index = Pinecone.from_existing_index(index_name, HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2"))
 
 pdf_storage = {}
 
@@ -39,16 +38,14 @@ def process_pdf(pdf_path, chunk_size=500):
 
 def store_vectors(chunks, pdf_name):
     for i, chunk in enumerate(chunks):
-        vector = model.encode(chunk).tolist()
-        index.upsert([(f"{pdf_name}-doc-{i}", vector, {"pdf_name": pdf_name, "text": chunk})])
+        index.add_texts([chunk], metadatas=[{"pdf_name": pdf_name, "text": chunk}])
 
 
 def query_vectors(query, selected_pdf):
-    vector = model.encode(query).tolist()
-    results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
+    results = index.similarity_search(query, k=5, filter={"pdf_name": selected_pdf})
     
-    if results["matches"]:
-        matched_texts = [match["metadata"]["text"] for match in results["matches"]]
+    if results:
+        matched_texts = [res.page_content for res in results]
         return "\n\n".join(matched_texts)
     else:
         return "No relevant information found in the selected document."
