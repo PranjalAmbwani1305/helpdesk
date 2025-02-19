@@ -3,6 +3,7 @@ import pinecone
 import openai
 import PyPDF2
 import os
+from pinecone import ServerlessSpec
 from dotenv import load_dotenv
 from deep_translator import GoogleTranslator  
 
@@ -18,10 +19,11 @@ index_name = "desk"
 if index_name not in pc.list_indexes().names():
     pc.create_index(
         name=index_name,
-        dimension=1536,  
-        metric="cosine"
+        spec=ServerlessSpec(
+            cloud="aws",
+            region="us-east-1"
+        )
     )
-
 index = pc.Index(index_name)
 
 openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
