@@ -9,15 +9,7 @@ load_dotenv()
 
 # Initialize Pinecone
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-pinecone.init(api_key=PINECONE_API_KEY, environment="us-west1-gcp")
-index_name = "pdf-qna"
-
-if index_name not in pinecone.list_indexes():
-    pinecone.create_index(index_name, dimension=1536, metric="cosine")
-
-index = pinecone.Index(index_name)
-
-# PDF Processing
+# Function to process PDF and extract text
 def process_pdf(pdf_path, chunk_size=500):
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
@@ -26,56 +18,80 @@ def process_pdf(pdf_path, chunk_size=500):
     chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
     return chunks
 
-# Store PDF Locally
-def store_pdf_locally(uploaded_file):
-    pdf_path = os.path.join("pdf_storage", uploaded_file.name)
+# Function to store PDF in local directory
+def store_pdf(pdf_name, pdf_data):
+    pdf_path = os.path.join("stored_pdfs", pdf_name)
     with open(pdf_path, "wb") as f:
-        f.write(uploaded_file.read())
-    return pdf_path
+        f.write(pdf_data)
 
-# Retrieve Stored PDFs
+# Function to list stored PDFs
 def list_stored_pdfs():
-    return os.listdir("pdf_storage") if os.path.exists("pdf_storage") else []
+    if not os.path.exists("stored_pdfs"):
+        os.makedirs("stored_pdfs")
+    return [f for f in os.listdir("stored_pdfs") if f.endswith(".pdf")]
 
-# Pinecone Querying
-def query_vectors(query, selected_pdf):
-    results = index.query(vector=query, top_k=5, include_metadata=True)
-    
-    if results["matches"]:
-        matched_texts = [match["metadata"]["text"] for match in results["matches"]]
-        return "\n\n".join(matched_texts)
-    else:
-        return "No relevant information found."
-
-# Translation
+# Function to translate text
 def translate_text(text, target_language):
     return GoogleTranslator(source="auto", target=target_language).translate(text)
 
-# Streamlit UI
-st.title("📜 AI-Powered Legal HelpDesk")
+st.markdown("""
+    <h1 style='text-align: center;'>AI-Powered Legal HelpDesk</h1>
+""", unsafe_allow_html=True)
 
-pdf_source = st.radio("Select PDF Source", ["Upload from PC", "Choose from Stored PDFs"])
+st.sidebar.header("📂 Stored PDFs")
+pdf_list = list_stored_pdfs()
+if pdf_list:
+    with st.sidebar.expander("📜 View Stored PDFs", expanded=False):
+        for pdf in pdf_list:
+            st.sidebar.write(f"📄 {pdf}")
+else:
+    st.sidebar.write("No PDFs stored yet. Upload one!")
+
 selected_pdf = None
+pdf_source = st.radio("Select PDF Source", ["Upload from PC", "Choose from the Document Storage"])
 
 if pdf_source == "Upload from PC":
     uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
     if uploaded_file:
-        os.makedirs("pdf_storage", exist_ok=True)
-        selected_pdf = store_pdf_locally(uploaded_file)
-        st.success("PDF uploaded and stored!")
+        pdf_path = os.path.join("stored_pdfs", uploaded_file.name)
+        store_pdf(uploaded_file.name, uploaded_file.read())
+        st.success("PDF uploaded and stored locally!")
+        selected_pdf = uploaded_file.name
 
-elif pdf_source == "Choose from Stored PDFs":
-    pdf_list = list_stored_pdfs()
+elif pdf_source == "Choose from the Document Storage":
     if pdf_list:
         selected_pdf = st.selectbox("Select a PDF", pdf_list)
     else:
-        st.warning("No PDFs available. Please upload one.")
+        st.warning("No PDFs available in storage. Please upload one.")
 
-query = st.text_input("Ask a question:")
+input_lang = st.radio("Choose Input Language", ["English", "Arabic"], index=0)
+response_lang = st.radio("Choose Response Language", ["English", "Arabic"], index=0)
+
+if input_lang == "Arabic":
+    query = st.text_input("اسأل سؤالاً (باللغة العربية أو الإنجليزية):", key="query_input")
+    query_html = """
+    <style>
+    .stTextInput>div>div>input {
+        direction: rtl;
+        text-align: right;
+    }
+    </style>
+    """
+    st.markdown(query_html, unsafe_allow_html=True)
+else:
+    query = st.text_input("Ask a question (in English or Arabic):", key="query_input")
 
 if st.button("Get Answer"):
     if selected_pdf and query:
-        response = query_vectors(query, selected_pdf)
-        st.write(f"**Answer:** {response}")
+        pdf_path = os.path.join("stored_pdfs", selected_pdf)
+        pdf_chunks = process_pdf(pdf_path)
+        response = "\n".join(pdf_chunks[:3])  # Mock response with first few chunks
+        
+        if response_lang == "Arabic":
+            response = translate_text(response, "ar")
+            st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
+        else:
+            st.write(f"**Answer:** {response}")
     else:
         st.warning("Please enter a query and select a PDF.")
+
