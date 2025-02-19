@@ -3,9 +3,9 @@ import pinecone
 import PyPDF2
 import os
 from dotenv import load_dotenv
-from deep_translator import GoogleTranslator  
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import Pinecone
+from deep_translator import GoogleTranslator  from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import Pinecone
+
 from pinecone import Pinecone
 
 load_dotenv()
@@ -23,7 +23,7 @@ if index_name not in pc.list_indexes().names():
         metric="cosine"
     )
 
-index = Pinecone.from_existing_index(index_name, HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2"))
+index = Pinecone.from_existing_index(index_name, HuggingFaceEmbeddings(model_name="mistralai/Mixtral-8x7B"))
 
 pdf_storage = {}
 
