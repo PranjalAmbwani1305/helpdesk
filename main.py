@@ -12,7 +12,7 @@ PINECONE_ENV = st.secrets["PINECONE_ENV"]
 PINECONE_INDEX_NAME = st.secrets["PINECONE_INDEX_NAME"]
 
 
-if PINECONE_INDEX_NAME not in pinecone.list_indexes():
+if PINECONE_INDEX_NAME not in list_indexes():
     pinecone.create_index(PINECONE_INDEX_NAME, dimension=1536, metric="cosine")
 index = pinecone.Index(PINECONE_INDEX_NAME)
 
