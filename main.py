@@ -3,7 +3,6 @@ import pinecone
 import openai
 import PyPDF2
 import os
-from pinecone import ServerlessSpec
 from dotenv import load_dotenv
 from deep_translator import GoogleTranslator  
 
@@ -14,15 +13,7 @@ PINECONE_ENV = os.getenv("PINECONE_ENV")
 
 from pinecone import Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
-index_name = "desk"
-
-
-if index_name not in pc.list_indexes().names():
-    pc.create_index(
-        name=index_name,
-        dimension=1536,  
-        metric="cosine"
-    )
+index_name = "helpdesk"
 
 index = pc.Index(index_name)
 
