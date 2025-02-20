@@ -1,89 +1,86 @@
 import streamlit as st
-from pinecone import Pinecone
+import pinecone
 import pdfplumber
 import os
-import numpy as np
 from dotenv import load_dotenv
-from sentence_transformers import SentenceTransformer
 from deep_translator import GoogleTranslator
+from sentence_transformers import SentenceTransformer
 
 # Load environment variables
 load_dotenv()
+
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
 
 # Initialize Pinecone
-pc = Pinecone(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
+pinecone.init(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
-if index_name not in [i['name'] for i in pc.list_indexes()]:
-    pc.create_index(name=index_name, dimension=384, metric="cosine")
+# Create index if it doesn't exist
+if index_name not in pinecone.list_indexes():
+    pinecone.create_index(name=index_name, dimension=384, metric="cosine")
 
-index = pc.Index(index_name)
+index = pinecone.Index(index_name)
 
 # Load Hugging Face embedding model
-embedding_model = SentenceTransformer("BAAI/bge-m3")
+embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Simulated document storage (Replace with database or actual storage system)
-document_storage = ["Legal_Agreement.pdf", "Land_Act_2024.pdf", "Cyber_Crime_Laws.pdf"]
-
-def process_pdf(pdf_path, chunk_size=500, overlap=100):
-    """Extracts and chunks text from a PDF using a sliding window."""
+def process_pdf(pdf_path, chunk_size=500):
+    """Extracts and chunks text from a PDF."""
     text = ""
     with pdfplumber.open(pdf_path) as pdf:
         for page in pdf.pages:
-            page_text = page.extract_text()
-            if page_text:
-                text += page_text + "\n"
-
-    # Sliding window chunking
-    chunks = []
-    for i in range(0, len(text), chunk_size - overlap):
-        chunks.append(text[i:i + chunk_size])
-
+            text += page.extract_text() + "\n"
+    
+    chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
     return chunks
 
 def store_vectors(chunks, pdf_name):
     """Embeds and stores chunks in Pinecone."""
     vectors = embedding_model.encode(chunks).tolist()
     
-    upserts = [(f"{pdf_name}-chunk-{i}", vectors[i], {"pdf_name": pdf_name, "text": chunks[i]}) for i in range(len(chunks))]
+    upserts = [(f"{pdf_name}-doc-{i}", vectors[i], {"pdf_name": pdf_name, "text": chunks[i]}) for i in range(len(chunks))]
     index.upsert(upserts)
+
+def list_stored_pdfs():
+    """Retrieves stored PDFs from Pinecone."""
+    results = index.describe_index_stats()
+    if "namespaces" in results:
+        return list(results["namespaces"].keys())
+    return []
 
 def query_vectors(query, selected_pdf):
     """Searches for relevant text using Pinecone."""
     query_vector = embedding_model.encode([query]).tolist()[0]
-
-    # Improved Query: Filters by selected PDF & returns best matches
-    results = index.query(
-        vector=query_vector, 
-        top_k=5, 
-        include_metadata=True, 
-        filter={"pdf_name": {"$eq": selected_pdf}}
-    )
-
-    if results and "matches" in results:
-        matched_texts = [(match["metadata"]["text"], match["score"]) for match in results["matches"]]
-
-        # Sort results by cosine similarity score
-        matched_texts = sorted(matched_texts, key=lambda x: x[1], reverse=True)
-        return "\n\n".join([f"🔹 {text}" for text, _ in matched_texts])
     
+    results = index.query(vector=query_vector, top_k=5, include_metadata=True, filter={"pdf_name": selected_pdf})
+    
+    if results and "matches" in results:
+        matched_texts = [match["metadata"]["text"] for match in results["matches"]]
+        return "\n\n".join(matched_texts)
     return "No relevant information found."
 
 def translate_text(text, target_language):
-    """Translates text to the target language."""
     return GoogleTranslator(source="auto", target=target_language).translate(text)
 
 # Streamlit UI
-st.title("🧑‍⚖️ AI-Powered Legal HelpDesk Chatbot")
+st.title("🔍 AI-Powered Legal HelpDesk")
 
-# Select PDF Source
-pdf_source = st.radio("📂 Select PDF Source", ["Upload from PC", "Choose from Document Storage"])
+st.sidebar.header("📂 Stored PDFs")
+pdf_list = list_stored_pdfs()
+if pdf_list:
+    with st.sidebar.expander("📜 View Stored PDFs", expanded=False):
+        for pdf in pdf_list:
+            st.sidebar.write(f"📄 {pdf}")
+else:
+    st.sidebar.write("No PDFs stored yet. Upload one!")
+
 selected_pdf = None
 
+pdf_source = st.radio("Select PDF Source", ["Upload from PC", "Choose from the Document Storage"])
+
 if pdf_source == "Upload from PC":
-    uploaded_file = st.file_uploader("📄 Upload a PDF", type=["pdf"])
+    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
     if uploaded_file:
         temp_pdf_path = f"temp_{uploaded_file.name}"
         with open(temp_pdf_path, "wb") as f:
@@ -91,41 +88,42 @@ if pdf_source == "Upload from PC":
 
         chunks = process_pdf(temp_pdf_path)
         store_vectors(chunks, uploaded_file.name)
-        st.success(f"✅ {uploaded_file.name} uploaded and processed!")
+        st.success("PDF uploaded and processed!")
         selected_pdf = uploaded_file.name
 
-elif pdf_source == "Choose from Document Storage":
-    selected_pdf = st.selectbox("📁 Choose a legal document:", document_storage)
-    st.success(f"📜 Using stored document: {selected_pdf}")
+elif pdf_source == "Choose from the Document Storage":
+    if pdf_list:
+        selected_pdf = st.selectbox("Select a PDF", pdf_list)
+    else:
+        st.warning("No PDFs available in the repository. Please upload one.")
 
-# Chatbot Interface
-st.subheader("💬 Ask Your Legal Questions")
-query_lang = st.radio("🌐 Query Language", ["English", "Arabic"], index=0)
-response_lang = st.radio("🌐 Response Language", ["English", "Arabic"], index=0)
+input_lang = st.radio("Choose Input Language", ["English", "Arabic"], index=0)
+response_lang = st.radio("Choose Response Language", ["English", "Arabic"], index=0)
 
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
+if input_lang == "Arabic":
+    query = st.text_input("اسأل سؤالاً (باللغة العربية أو الإنجليزية):", key="query_input")
+    query_html = """
+    <style>
+    .stTextInput>div>div>input {
+        direction: rtl;
+        text-align: right;
+    }
+    </style>
+    """
+    st.markdown(query_html, unsafe_allow_html=True)
+else:
+    query = st.text_input("Ask a question (in English or Arabic):", key="query_input")
 
-query = st.text_input("💡 Your Question:")
-
-if st.button("🕵️ Get Answer"):
+if st.button("Get Answer"):
     if selected_pdf and query:
-        with st.spinner("🔎 Searching..."):
-            query_translated = translate_text(query, "en") if query_lang == "Arabic" else query
-            response = query_vectors(query_translated, selected_pdf)
+        detected_lang = GoogleTranslator(source="auto", target="en").translate(query)
+        
+        response = query_vectors(detected_lang, selected_pdf)
 
         if response_lang == "Arabic":
             response = translate_text(response, "ar")
-            response_display = f"<div dir='rtl' style='text-align: right;'>{response}</div>"
+            st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
         else:
-            response_display = f"**🤖 AI Answer:** {response}"
-
-        # Add to chat history
-        st.session_state.chat_history.append(("👤 You:", query))
-        st.session_state.chat_history.append(("🤖 AI:", response_display))
-
-        # Display chat history
-        for speaker, message in st.session_state.chat_history:
-            st.markdown(f"**{speaker}** {message}", unsafe_allow_html=True)
+            st.write(f"**Answer:** {response}")
     else:
-        st.warning("⚠️ Please select a document and ask a question.")
+        st.warning("Please enter a query and select a PDF.")
