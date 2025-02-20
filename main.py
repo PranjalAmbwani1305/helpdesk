@@ -15,6 +15,7 @@ MONGO_URI = os.getenv("MONGO_URI")
 client = pymongo.MongoClient(MONGO_URI)
 db = client["helpdesk"]
 collection = db["data"]
+pdf_collection = db["pdf_repository"] 
 
 # Pinecone Setup
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
