@@ -20,12 +20,12 @@ PINECONE_ENV = os.getenv("PINECONE_ENV")
 
 from pinecone import Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
-index_name = "pdf-qna"
+index_name = "helpdesk"
 
 if index_name not in pc.list_indexes().names():
     pc.create_index(
         name=index_name,
-        dimension=768,  
+        dimension=348,  
         metric="cosine"
     )
 
