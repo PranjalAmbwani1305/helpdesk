@@ -1,5 +1,6 @@
 import streamlit as st
 import pinecone
+from pinecone import Pinecone
 import pymongo
 import os
 import pdfplumber
@@ -15,17 +16,9 @@ MONGO_URI = os.getenv("MONGO_URI")
 client = pymongo.MongoClient(MONGO_URI)
 db = client["helpdesk"]
 collection = db["data"]
-
-
-# Pinecone Setup
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-pinecone.init(api_key=PINECONE_API_KEY, environment="us-east-1")
-
-index_name = "legal-helpdesk"
-if index_name not in pinecone.list_indexes():
-    pinecone.create_index(name=index_name, dimension=384, metric="cosine")  # Hugging Face uses 384 dimensions
-
-index = pinecone.Index(index_name)
+pc = Pinecone(api_key=PINECONE_API_KEY)
+index_name = "helpdesk"
+index = pc.Index(index_name)
 
 # Hugging Face Sentence Embedding Model
 embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
