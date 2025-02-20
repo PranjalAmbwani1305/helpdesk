@@ -1,46 +1,49 @@
-import os
-import logging
 import streamlit as st
 import pymongo
-import torch
-import PyPDF2
+import pinecone
+import os
 from dotenv import load_dotenv
-from transformers import AutoTokenizer, AutoModel, pipeline
 from deep_translator import GoogleTranslator  
-from pinecone import Pinecone, ServerlessSpec
+from transformers import pipeline, AutoTokenizer, AutoModel
+import torch
 
-# Load environment variables
 load_dotenv()
 
-# Setup logging
-logging.basicConfig(level=logging.INFO)
-
-# MongoDB Setup
 MONGO_URI = os.getenv("MONGO_URI")
 client = pymongo.MongoClient(MONGO_URI)
-db = client["helpdesk"]
-collection = db["data"]
+db = client["Saudi_Arabia_Law"]
+collection = db["pdf_chunks"]
+pdf_collection = db["pdf_repository"]  
 
-# Pinecone Setup
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+PINECONE_ENV = os.getenv("PINECONE_ENV")
+
+from pinecone import Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
-index_name = "helpdesk"
+index_name = "pdf-qna"
 
 if index_name not in pc.list_indexes().names():
     pc.create_index(
         name=index_name,
-        dimension=384,
+        dimension=768,  
         metric="cosine"
     )
 
 index = pc.Index(index_name)
 
-# Hugging Face Setup
-EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-TOKENIZER_MODEL = "tiiuae/falcon-7b-instruct"
-tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_MODEL)
-model = AutoModel.from_pretrained(TOKENIZER_MODEL, torch_dtype=torch.float16, device_map="auto")
-text_gen_pipeline = pipeline("text-generation", model=model, tokenizer=tokenizer)
+# Load Hugging Face embedding model
+hf_model = "sentence-transformers/all-MiniLM-L6-v2"
+embedder = AutoModel.from_pretrained(hf_model)
+tokenizer = AutoTokenizer.from_pretrained(hf_model)
+
+# Load Hugging Face chat model
+chat_model = pipeline("text-generation", model="mistralai/Mistral-7B-Instruct-v0.1")
+
+def get_embedding(text):
+    tokens = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
+    with torch.no_grad():
+        embedding = embedder(**tokens).last_hidden_state.mean(dim=1).squeeze().tolist()
+    return embedding
 
 def process_pdf(pdf_path, chunk_size=500):
     with open(pdf_path, "rb") as file:
@@ -60,41 +63,97 @@ def insert_chunks(chunks, pdf_name):
 
 def store_vectors(chunks, pdf_name):
     for i, chunk in enumerate(chunks):
-        inputs = tokenizer(chunk, return_tensors="pt", padding=True, truncation=True)
-        vector = model(**inputs).last_hidden_state.mean(dim=1).detach().cpu().numpy().tolist()[0]
+        vector = get_embedding(chunk)
         index.upsert([(f"{pdf_name}-doc-{i}", vector, {"pdf_name": pdf_name, "text": chunk})])
 
+def list_stored_pdfs():
+    return pdf_collection.distinct("pdf_name")
+
+def store_pdf(pdf_name, pdf_data):
+    if pdf_collection.count_documents({"pdf_name": pdf_name}) == 0:
+        pdf_collection.insert_one({"pdf_name": pdf_name, "pdf_data": pdf_data})
+
 def query_vectors(query, selected_pdf):
-    inputs = tokenizer(query, return_tensors="pt", padding=True, truncation=True)
-    vector = model(**inputs).last_hidden_state.mean(dim=1).detach().cpu().numpy().tolist()[0]
+    vector = get_embedding(query)
     
     results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
     
     if results["matches"]:
         matched_texts = [match["metadata"]["text"] for match in results["matches"]]
         combined_text = "\n\n".join(matched_texts)
-        prompt = f"Based on the following legal document ({selected_pdf}), provide an accurate answer:\n\n{combined_text}\n\nUser's Question: {query}"
-        response = text_gen_pipeline(prompt, max_length=500, do_sample=True)[0]["generated_text"]
+        
+        prompt = (
+            f"Based on the following legal document ({selected_pdf}), provide an accurate and well-reasoned answer:\n\n"
+            f"{combined_text}\n\n"
+            f"User's Question: {query}"
+        )
+        
+        response = chat_model(prompt, max_length=500, do_sample=True, temperature=0.7)[0]['generated_text']
         return response
     else:
         return "No relevant information found in the selected document."
 
-# Streamlit UI
-st.title("🔹 AI-Powered Legal HelpDesk using Hugging Face & Pinecone")
+def translate_text(text, target_language):
+    return GoogleTranslator(source="auto", target=target_language).translate(text)
 
-uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
-if uploaded_file:
-    temp_pdf_path = f"temp_{uploaded_file.name}"
-    with open(temp_pdf_path, "wb") as f:
-        f.write(uploaded_file.read())
-    
-    chunks = process_pdf(temp_pdf_path)
-    insert_chunks(chunks, uploaded_file.name)
-    store_vectors(chunks, uploaded_file.name)
-    st.success("PDF uploaded and processed!")
+st.markdown(
+    "<h1 style='text-align: center;'>AI-Powered Legal HelpDesk for Saudi Arabia</h1>",
+    unsafe_allow_html=True
+)
 
-query = st.text_input("Ask a legal question:")
+st.sidebar.header("📂 Stored PDFs")
+pdf_list = list_stored_pdfs()
+if pdf_list:
+    with st.sidebar.expander("📜 View Stored PDFs", expanded=False):
+        for pdf in pdf_list:
+            st.sidebar.write(f"📄 {pdf}")
+else:
+    st.sidebar.write("No PDFs stored yet. Upload one!")
+
+selected_pdf = None
+
+pdf_source = st.radio("Select PDF Source", ["Upload from PC", "Choose from the Document Storage"])
+
+if pdf_source == "Upload from PC":
+    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
+    if uploaded_file:
+        temp_pdf_path = f"temp_{uploaded_file.name}"
+        with open(temp_pdf_path, "wb") as f:
+            f.write(uploaded_file.read())
+
+        store_pdf(uploaded_file.name, uploaded_file.read())
+
+        if not chunks_exist(uploaded_file.name):
+            chunks = process_pdf(temp_pdf_path)
+            insert_chunks(chunks, uploaded_file.name)
+            store_vectors(chunks, uploaded_file.name)
+            st.success("PDF uploaded and processed!")
+        else:
+            st.info("This PDF has already been processed!")
+
+        selected_pdf = uploaded_file.name
+
+elif pdf_source == "Choose from the Document Storage":
+    if pdf_list:
+        selected_pdf = st.selectbox("Select a PDF", pdf_list)
+    else:
+        st.warning("No PDFs available in the repository. Please upload one.")
+
+input_lang = st.radio("Choose Input Language", ["English", "Arabic"], index=0)
+response_lang = st.radio("Choose Response Language", ["English", "Arabic"], index=0)
+
+query = st.text_input("Ask a question (in English or Arabic):", key="query_input")
+
 if st.button("Get Answer"):
-    if uploaded_file and query:
-        response = query_vectors(query, uploaded_file.name)
-        st.write(f"**Answer:** {response}")
+    if selected_pdf and query:
+        detected_lang = GoogleTranslator(source="auto", target="en").translate(query)
+        
+        response = query_vectors(detected_lang, selected_pdf)
+
+        if response_lang == "Arabic":
+            response = translate_text(response, "ar")
+            st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
+        else:
+            st.write(f"**Answer:** {response}")
+    else:
+        st.warning("Please enter a query and select a PDF.")
