@@ -28,10 +28,8 @@ PINECONE_ENV = os.getenv("PINECONE_ENV")
 
 pc = pinecone(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
 index_name = "helpdesk"
-index = pinecone.Index(index_name)
-pc = Pinecone(api_key=PINECONE_API_KEY)
-index_name = "helpdesk"
 index = pc.Index(index_name)
+
 
 # Hugging Face Setup
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
