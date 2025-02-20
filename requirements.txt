@@ -1,6 +1,7 @@
 streamlit
 pinecone-client
 pypdf2
+pdfplumber
 python-dotenv
 deep-translator
 langchain
