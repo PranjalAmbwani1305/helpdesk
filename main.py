@@ -1,5 +1,6 @@
 import streamlit as st
 import pinecone
+from pinecone import Pinecone
 import pdfplumber
 import os
 from dotenv import load_dotenv
@@ -12,14 +13,10 @@ load_dotenv()
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
 
-
+pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
-# Create index if it doesn't exist
-if index_name not in pinecone.list_indexes():
-    pinecone.create_index(name=index_name, dimension=384, metric="cosine")
-
-index = pinecone.Index(index_name)
+index = pc.Index(index_name)
 
 # Load Hugging Face embedding model
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
