@@ -12,12 +12,14 @@ from deep_translator import GoogleTranslator
 load_dotenv()
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
+MONGO_URI = os.getenv("MONGO_URI")
 
 # MongoDB Connection
-MONGO_URI = os.getenv("MONGO_URI")
 client = pymongo.MongoClient(MONGO_URI)
 db = client["helpdesk"]
 collection = db["data"]
+
+# Pinecone Initialization
 pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 index = pc.Index(index_name)
@@ -39,8 +41,8 @@ def process_pdf(pdf_path, chunk_size=500):
 
 def store_pdf(pdf_name, pdf_data):
     """Stores uploaded PDFs in MongoDB."""
-    if pdf_collection.count_documents({"pdf_name": pdf_name}) == 0:
-        pdf_collection.insert_one({"pdf_name": pdf_name, "pdf_data": pdf_data})
+    if collection.count_documents({"pdf_name": pdf_name}) == 0:
+        collection.insert_one({"pdf_name": pdf_name, "pdf_data": pdf_data})
 
 def chunks_exist(pdf_name):
     """Checks if PDF chunks already exist in the database."""
@@ -61,7 +63,7 @@ def store_vectors(chunks, pdf_name):
 
 def list_stored_pdfs():
     """Lists stored PDFs in MongoDB."""
-    return pdf_collection.distinct("pdf_name")
+    return collection.distinct("pdf_name")
 
 def query_vectors(query, selected_pdf):
     """Searches Pinecone for the most relevant text chunks and formats the response."""
