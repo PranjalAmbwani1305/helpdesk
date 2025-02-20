@@ -8,15 +8,16 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from huggingface_hub import login
 
 load_dotenv()
-HUGGINGFACE_TOKEN = os.getenv("HUGGINGFACE_TOKEN")
+
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+HUGGINGFACE_TOKEN = os.getenv("HUGGINGFACE_TOKEN")
 index_name = "helpdesk"
 
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index = pc.Index(index_name)
 
 
-embedder = HuggingFaceEmbeddings(model_name="mistralai/Mistral-7B-Instruct-v0.")
+embedder = HuggingFaceEmbeddings(model_name="mistralai/Mistral-7B-Instruct-v0.1")
 
 def process_pdf(pdf_path, chunk_size=500):
     with open(pdf_path, "rb") as file:
