@@ -12,8 +12,7 @@ load_dotenv()
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
 
-# Initialize Pinecone
-pinecone.init(api_key=PINECONE_API_KEY)
+
 index_name = "helpdesk"
 
 # Create index if it doesn't exist
