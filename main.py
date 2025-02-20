@@ -20,13 +20,13 @@ collection = db["data"]
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
 
-pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
+from pinecone import Pinecone
+pc = Pinecone(api_key=PINECONE_API_KEY)
+
 index_name = "helpdesk"
 
-if index_name not in pinecone.list_indexes():
-    pinecone.create_index(name=index_name, dimension=384, metric="cosine")
+index = pc.Index(index_name)
 
-index = pinecone.Index(index_name)
 
 # Hugging Face Embedding Model
 embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
