@@ -3,7 +3,7 @@ import logging
 import streamlit as st
 import pymongo
 import pinecone
-from pinecone import pinecone
+from pinecone import Pinecone
 import torch
 import PyPDF2
 from dotenv import load_dotenv
