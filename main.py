@@ -11,9 +11,9 @@ load_dotenv()
 
 MONGO_URI = os.getenv("MONGO_URI")
 client = pymongo.MongoClient(MONGO_URI)
-db = client["Saudi_Arabia_Law"]
-collection = db["pdf_chunks"]
-pdf_collection = db["pdf_repository"]  
+db = client["helpdesk"]
+collection = db["data"]
+
 
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
