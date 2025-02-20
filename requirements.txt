@@ -1,9 +1,7 @@
 streamlit
 pinecone-client
-pypdf2
-pdfplumber
-python-dotenv
-deep-translator
 langchain
-langchain-community
+langchain_huggingface
 sentence-transformers
+PyPDF2
+python-dotenv
