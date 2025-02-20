@@ -16,7 +16,7 @@ PINECONE_ENV = os.getenv("PINECONE_ENV")
 pc = Pinecone(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
 index_name = "helpdesk"
 
-if index_name not in pc.list_indexes():
+if index_name not in [i['name'] for i in pc.list_indexes()]:
     pc.create_index(name=index_name, dimension=384, metric="cosine")
 
 index = pc.Index(index_name)
