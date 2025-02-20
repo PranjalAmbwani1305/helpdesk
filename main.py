@@ -19,7 +19,7 @@ collection = db["data"]
 
 # Pinecone Setup
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-pinecone.init(api_key=PINECONE_API_KEY, environment="us-west1-gcp")
+pinecone.init(api_key=PINECONE_API_KEY, environment="us-east-1)
 
 index_name = "legal-helpdesk"
 if index_name not in pinecone.list_indexes():
