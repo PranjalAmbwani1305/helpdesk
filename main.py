@@ -16,7 +16,7 @@ index_name = "helpdesk"
 
 # Check if index exists, otherwise create one
 if index_name not in pc.list_indexes().names():
-    pc.create_index(name=index_name, dimension=384, metric="cosine")
+    pc.create_index(name=index_name, dimension=768, metric="cosine")
 
 index = pc.Index(index_name)
 
