@@ -11,11 +11,10 @@ load_dotenv()
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 index_name = "helpdesk"
 
-def init_pinecone():
-    pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
-       pc.Index(index_name)
+pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
+index = pc.Index(index_name)
 
-index = init_pinecone()
+
 embedder = HuggingFaceEmbeddings(model_name="mistralai/Mixtral-8x7B-Instruct-v0.1")
 
 def process_pdf(pdf_path, chunk_size=500):
