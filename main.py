@@ -1,5 +1,6 @@
 import os
 import pinecone
+from pinecone import Pinecone
 import streamlit as st
 import PyPDF2
 from dotenv import load_dotenv
@@ -18,9 +19,9 @@ HUGGINGFACE_TOKEN = os.getenv("HUGGINGFACE_TOKEN")
 login(token=HUGGINGFACE_TOKEN)
 
 # ✅ Initialize Pinecone
-pinecone.init(api_key=PINECONE_API_KEY)
+pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
-index = pinecone.Index(index_name)
+index = pc.Index(index_name)
 
 # ✅ Load embedding model
 embedder = HuggingFaceEmbeddings(model_name="BAAI/bge-large-en")
