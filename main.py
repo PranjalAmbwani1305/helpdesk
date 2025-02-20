@@ -4,6 +4,7 @@ import os
 import pdfplumber
 from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
+from deep_translator import GoogleTranslator  
 
 # Load environment variables
 load_dotenv()
@@ -19,11 +20,11 @@ if index_name not in pc.list_indexes().names():
 
 index = pc.Index(index_name)
 
-# Hugging Face Sentence Embedding Model
+# Embedding Model
 embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
 def process_pdf(pdf_path, chunk_size=500):
-    """Extracts and chunks text from a PDF file."""
+    """Extract and chunk text from a PDF."""
     text = ""
     with pdfplumber.open(pdf_path) as pdf:
         for page in pdf.pages:
@@ -65,8 +66,12 @@ def query_vectors(query, selected_pdf=None):
     
     return "No relevant information found."
 
+def translate_text(text, target_language):
+    """Translates text to the specified language."""
+    return GoogleTranslator(source="auto", target=target_language).translate(text)
+
 # Streamlit UI
-st.markdown("<h1 style='text-align: center;'>📂 AI-Powered HelpDesk</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center;'>📂 AI-Powered Legal HelpDesk</h1>", unsafe_allow_html=True)
 
 # Select PDF Source
 pdf_source = st.radio("📑 Select PDF Source:", ["Upload from PC", "Choose from the Document Storage"])
@@ -95,12 +100,26 @@ elif pdf_source == "Choose from the Document Storage":
     else:
         st.warning("⚠️ No PDFs available in the repository. Please upload one.")
 
-# Query Input
-query = st.text_input("💬 Ask a question:")
+# Language Selection
+input_lang = st.radio("🌍 Choose Input Language", ["English", "Arabic"], index=0)
+response_lang = st.radio("🌍 Choose Response Language", ["English", "Arabic"], index=0)
+
+if input_lang == "Arabic":
+    query = st.text_input("🔍 اسأل سؤالاً (باللغة العربية أو الإنجليزية):")
+    st.markdown("<style>.stTextInput>div>div>input {direction: rtl; text-align: right;}</style>", unsafe_allow_html=True)
+else:
+    query = st.text_input("🔍 Ask a question (in English or Arabic):")
 
 if st.button("Get Answer"):
     if query and (pdf_source == "Choose from the Document Storage" and selected_pdf):
-        response = query_vectors(query, selected_pdf)
-        st.write(f"**Answer:** {response}")
+        detected_lang = GoogleTranslator(source="auto", target="en").translate(query)
+        
+        response = query_vectors(detected_lang, selected_pdf)
+
+        if response_lang == "Arabic":
+            response = translate_text(response, "ar")
+            st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
+        else:
+            st.write(f"**Answer:** {response}")
     else:
         st.warning("⚠️ Please enter a question and select a PDF.")
