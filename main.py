@@ -3,35 +3,38 @@ import logging
 import streamlit as st
 import pymongo
 import pinecone
-from pinecone import Pinecone
 import torch
 import PyPDF2
 from dotenv import load_dotenv
 from transformers import AutoTokenizer, AutoModel, pipeline
 from deep_translator import GoogleTranslator  
 
-
+# Load environment variables
 load_dotenv()
 
-
+# Setup logging
 logging.basicConfig(level=logging.INFO)
 
-
+# MongoDB Setup
 MONGO_URI = os.getenv("MONGO_URI")
 client = pymongo.MongoClient(MONGO_URI)
 db = client["helpdesk"]
 collection = db["data"]
 
+
 # Pinecone Setup
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
 
-pc = pinecone(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
+pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
 index_name = "helpdesk"
-index = pc.Index(index_name)
+
+if index_name not in pinecone.list_indexes():
+    pinecone.create_index(name=index_name, dimension=348, metric="cosine")
+
+index = pinecone.Index(index_name)
 
 
-# Hugging Face Setup
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 TOKENIZER_MODEL = "mistralai/Mistral-7B-Instruct-v0.1"
 tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_MODEL)
@@ -76,7 +79,7 @@ def query_vectors(query, selected_pdf):
         return "No relevant information found in the selected document."
 
 # Streamlit UI
-st.title("🔹 AI-Powered Legal HelpDesk using Hugging Face & Pinecone")
+st.title("🔹  Legal HelpDesk")
 
 uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
 if uploaded_file:
