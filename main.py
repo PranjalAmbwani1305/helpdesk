@@ -10,6 +10,8 @@ from deep_translator import GoogleTranslator
 
 # Load environment variables
 load_dotenv()
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+PINECONE_ENV = os.getenv("PINECONE_ENV")
 
 # MongoDB Connection
 MONGO_URI = os.getenv("MONGO_URI")
