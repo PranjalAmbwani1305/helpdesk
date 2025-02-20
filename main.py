@@ -18,9 +18,8 @@ logging.basicConfig(level=logging.INFO)
 # MongoDB Setup
 MONGO_URI = os.getenv("MONGO_URI")
 client = pymongo.MongoClient(MONGO_URI)
-db = client["Saudi_Arabia_Law"]
-collection = db["pdf_chunks"]
-pdf_collection = db["pdf_repository"]
+db = client["helpdesk"]
+collection = db["data"]
 
 # Pinecone Setup
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
@@ -30,7 +29,7 @@ index_name = "helpdesk"
 if index_name not in pc.list_indexes().names():
     pc.create_index(
         name=index_name,
-        dimension=768,
+        dimension=384,
         metric="cosine"
     )
 
@@ -38,10 +37,10 @@ index = pc.Index(index_name)
 
 # Hugging Face Setup
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-TOKENIZER_MODEL = "mistralai/Mistral-7B-Instruct-v0.1"
+TOKENIZER_MODEL = "tiiuae/falcon-7b-instruct"
 tokenizer = AutoTokenizer.from_pretrained(TOKENIZER_MODEL)
-model = AutoModel.from_pretrained(TOKENIZER_MODEL, torch_dtype=torch.float16)
-text_gen_pipeline = pipeline("text-generation", model=TOKENIZER_MODEL, tokenizer=tokenizer)
+model = AutoModel.from_pretrained(TOKENIZER_MODEL, torch_dtype=torch.float16, device_map="auto")
+text_gen_pipeline = pipeline("text-generation", model=model, tokenizer=tokenizer)
 
 def process_pdf(pdf_path, chunk_size=500):
     with open(pdf_path, "rb") as file:
@@ -62,12 +61,12 @@ def insert_chunks(chunks, pdf_name):
 def store_vectors(chunks, pdf_name):
     for i, chunk in enumerate(chunks):
         inputs = tokenizer(chunk, return_tensors="pt", padding=True, truncation=True)
-        vector = model(**inputs).last_hidden_state.mean(dim=1).detach().numpy().tolist()[0]
+        vector = model(**inputs).last_hidden_state.mean(dim=1).detach().cpu().numpy().tolist()[0]
         index.upsert([(f"{pdf_name}-doc-{i}", vector, {"pdf_name": pdf_name, "text": chunk})])
 
 def query_vectors(query, selected_pdf):
     inputs = tokenizer(query, return_tensors="pt", padding=True, truncation=True)
-    vector = model(**inputs).last_hidden_state.mean(dim=1).detach().numpy().tolist()[0]
+    vector = model(**inputs).last_hidden_state.mean(dim=1).detach().cpu().numpy().tolist()[0]
     
     results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
     
@@ -81,7 +80,7 @@ def query_vectors(query, selected_pdf):
         return "No relevant information found in the selected document."
 
 # Streamlit UI
-st.title("🔹 AI-Powered Legal HelpDesk ")
+st.title("🔹 AI-Powered Legal HelpDesk using Hugging Face & Pinecone")
 
 uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
 if uploaded_file:
