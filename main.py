@@ -3,6 +3,7 @@ import logging
 import streamlit as st
 import pymongo
 import pinecone
+from pinecone import pinecone
 import torch
 import PyPDF2
 from dotenv import load_dotenv
@@ -25,13 +26,12 @@ collection = db["data"]
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
 
-pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
-index_name = "pdf-qna"
-
-if index_name not in pinecone.list_indexes():
-    pinecone.create_index(name=index_name, dimension=768, metric="cosine")
-
+pc = pinecone(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
+index_name = "helpdesk"
 index = pinecone.Index(index_name)
+pc = Pinecone(api_key=PINECONE_API_KEY)
+index_name = "helpdesk"
+index = pc.Index(index_name)
 
 # Hugging Face Setup
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
