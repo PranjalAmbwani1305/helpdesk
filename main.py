@@ -5,9 +5,10 @@ import streamlit as st
 import PyPDF2
 from dotenv import load_dotenv
 from langchain_huggingface import HuggingFaceEmbeddings
+from huggingface_hub import login
 
 load_dotenv()
-
+HUGGINGFACE_TOKEN = os.getenv("HUGGINGFACE_TOKEN")
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 index_name = "helpdesk"
 
@@ -15,7 +16,7 @@ pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index = pc.Index(index_name)
 
 
-embedder = HuggingFaceEmbeddings(model_name="mistralai/Mixtral-8x7B-Instruct-v0.1")
+embedder = HuggingFaceEmbeddings(model_name="mistralai/Mistral-7B-Instruct-v0.")
 
 def process_pdf(pdf_path, chunk_size=500):
     with open(pdf_path, "rb") as file:
