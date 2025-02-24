@@ -18,8 +18,11 @@ index_name = "helpdesk"
 
 
 index = pc.Index(index_name)
-
-
+if "PINECONE_API_KEY" in st.secrets:
+    st.write("✅ Pinecone API Key Loaded")
+else:
+    st.write("❌ Pinecone API Key Not Found")
+    
 def process_pdf(pdf_path, chunk_size=500):
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
