@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 import pymongo
+from pymongo import MongoClient
 import pinecone
 from langchain.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
