@@ -8,12 +8,12 @@ from deep_translator import GoogleTranslator
 
 load_dotenv()
 
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-PINECONE_ENV = os.getenv("PINECONE_ENV")
+PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
+OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
 
 from pinecone import Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
-index_name = "pdf-qna"
+index_name = "helpdesk"
 
 if index_name not in pc.list_indexes().names():
     pc.create_index(
@@ -24,7 +24,6 @@ if index_name not in pc.list_indexes().names():
 
 index = pc.Index(index_name)
 
-openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 def process_pdf(pdf_path, chunk_size=500):
     with open(pdf_path, "rb") as file:
