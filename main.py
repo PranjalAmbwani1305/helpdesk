@@ -16,7 +16,7 @@ load_dotenv()
 
 # MongoDB Connection (Optional for Tracking PDFs)
 MONGO_URI = st.secrets["MONGO_URI"]
-client = pymongo.MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+client = pymongo.MongoClient(MONGO_URI)
 db = client["helpdesk"]
 pdf_collection = db["pdf_repository"]
 
