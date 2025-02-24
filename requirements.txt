@@ -1,5 +1,6 @@
 streamlit
 pymongo
+pinecone
 pinecone-client
 openai
 pypdf2
