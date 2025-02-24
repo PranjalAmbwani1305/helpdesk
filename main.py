@@ -1,11 +1,8 @@
 import streamlit as st
 import os
-import pymongo
-from pymongo import MongoClient
 import pinecone
 from langchain.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.vectorstores import FAISS
 from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain.chains import RetrievalQA
 from langchain.chat_models import ChatOpenAI
@@ -15,14 +12,8 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# MongoDB Connection (Optional for Tracking PDFs)
-MONGO_URI = st.secrets["mongo"]["MONGO_URI"]
-client = MongoClient(MONGO_URI)
-db = client["helpdesk"]
-pdf_collection = db["pdf_repository"]
-
-# Load environment variables
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+# Load Pinecone API Key from Streamlit secrets
+PINECONE_API_KEY = st.secrets["pinecone"]["PINECONE_API_KEY"]
 index_name = "helpdesk"
 
 # Initialize Pinecone using the Pinecone class
@@ -48,11 +39,6 @@ def process_pdf(uploaded_file):
     chunks = text_splitter.split_documents(pages)
     return chunks
 
-# Store PDF Metadata in MongoDB (Optional)
-def store_pdf_metadata(pdf_name):
-    if pdf_collection.count_documents({"pdf_name": pdf_name}) == 0:
-        pdf_collection.insert_one({"pdf_name": pdf_name})
-
 # List Stored PDFs from Pinecone
 def list_stored_pdfs():
     try:
@@ -76,7 +62,6 @@ selected_pdf = st.sidebar.selectbox("Select a PDF", stored_pdfs) if stored_pdfs 
 uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
 if uploaded_file:
     pdf_name = uploaded_file.name
-    store_pdf_metadata(pdf_name)  # Optional tracking in MongoDB
     pdf_chunks = process_pdf(uploaded_file)
 
     # Store embeddings in Pinecone
