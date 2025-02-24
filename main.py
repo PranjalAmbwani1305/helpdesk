@@ -1,5 +1,4 @@
 import streamlit as st
-import pymongo
 import pinecone
 import openai
 import PyPDF2
@@ -8,12 +7,6 @@ from dotenv import load_dotenv
 from deep_translator import GoogleTranslator  
 
 load_dotenv()
-
-MONGO_URI = os.getenv("MONGO_URI")
-client = pymongo.MongoClient(MONGO_URI)
-db = client["Saudi_Arabia_Law"]
-collection = db["pdf_chunks"]
-pdf_collection = db["pdf_repository"]  
 
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
@@ -41,25 +34,10 @@ def process_pdf(pdf_path, chunk_size=500):
     chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
     return chunks
 
-def chunks_exist(pdf_name):
-    return collection.count_documents({"pdf_name": pdf_name}) > 0
-
-def insert_chunks(chunks, pdf_name):
-    if not chunks_exist(pdf_name):
-        for chunk in chunks:
-            collection.insert_one({"pdf_name": pdf_name, "text": chunk})
-
 def store_vectors(chunks, pdf_name):
     for i, chunk in enumerate(chunks):
         vector = openai_client.embeddings.create(input=[chunk], model="text-embedding-ada-002").data[0].embedding
         index.upsert([(f"{pdf_name}-doc-{i}", vector, {"pdf_name": pdf_name, "text": chunk})])
-
-def list_stored_pdfs():
-    return pdf_collection.distinct("pdf_name")
-
-def store_pdf(pdf_name, pdf_data):
-    if pdf_collection.count_documents({"pdf_name": pdf_name}) == 0:
-        pdf_collection.insert_one({"pdf_name": pdf_name, "pdf_data": pdf_data})
 
 def query_vectors(query, selected_pdf):
     vector = openai_client.embeddings.create(input=[query], model="text-embedding-ada-002").data[0].embedding
@@ -97,18 +75,9 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-st.sidebar.header("📂 Stored PDFs")
-pdf_list = list_stored_pdfs()
-if pdf_list:
-    with st.sidebar.expander("📜 View Stored PDFs", expanded=False):
-        for pdf in pdf_list:
-            st.sidebar.write(f"📄 {pdf}")
-else:
-    st.sidebar.write("No PDFs stored yet. Upload one!")
+pdf_source = st.radio("Select PDF Source", ["Upload from PC"])
 
 selected_pdf = None
-
-pdf_source = st.radio("Select PDF Source", ["Upload from PC", "Choose from the Document Storage"])
 
 if pdf_source == "Upload from PC":
     uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
@@ -117,23 +86,10 @@ if pdf_source == "Upload from PC":
         with open(temp_pdf_path, "wb") as f:
             f.write(uploaded_file.read())
 
-        store_pdf(uploaded_file.name, uploaded_file.read())
-
-        if not chunks_exist(uploaded_file.name):
-            chunks = process_pdf(temp_pdf_path)
-            insert_chunks(chunks, uploaded_file.name)
-            store_vectors(chunks, uploaded_file.name)
-            st.success("PDF uploaded and processed!")
-        else:
-            st.info("This PDF has already been processed!")
-
+        chunks = process_pdf(temp_pdf_path)
+        store_vectors(chunks, uploaded_file.name)
+        st.success("PDF uploaded and processed!")
         selected_pdf = uploaded_file.name
-
-elif pdf_source == "Choose from the Document Storage":
-    if pdf_list:
-        selected_pdf = st.selectbox("Select a PDF", pdf_list)
-    else:
-        st.warning("No PDFs available in the repository. Please upload one.")
 
 input_lang = st.radio("Choose Input Language", ["English", "Arabic"], index=0)
 response_lang = st.radio("Choose Response Language", ["English", "Arabic"], index=0)
