@@ -1,5 +1,6 @@
 import streamlit as st
 import pinecone
+from pinecone import Pinecone
 import openai
 import PyPDF2
 import os
@@ -11,7 +12,7 @@ load_dotenv()
 PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
 OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
 
-from pinecone import Pinecone
+
 pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
