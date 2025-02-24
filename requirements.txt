@@ -1,10 +1,7 @@
 streamlit
-pinecone-client
-langchain
-langchain_huggingface
-sentence-transformers
-PyPDF2
-python-dotenv
 pymongo
-deep-translator
-pdfplumber
+python-dotenv
+pypdf2
+langchain
+faiss-cpu
+openai
