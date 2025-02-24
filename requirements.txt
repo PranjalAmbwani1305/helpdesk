@@ -1,4 +1,5 @@
 streamlit
+pinecone
 pymongo
 python-dotenv
 pypdf2
