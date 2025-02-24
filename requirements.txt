@@ -1,9 +1,9 @@
 streamlit
-pinecone
 pymongo
-python-dotenv
-pypdf2
-langchain-community
-langchain
-faiss-cpu
+pinecone-client
 openai
+pypdf2
+requests
+python-dotenv
+deep-translator
+pinecone
