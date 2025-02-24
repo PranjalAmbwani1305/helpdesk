@@ -24,7 +24,7 @@ pdf_collection = db["pdf_repository"]
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 index_name = "helpdesk"
 
-pinecone.init(api_key=PINECONE_API_KEY, environment="us-west1-gcp")
+pinecone.init(api_key=PINECONE_API_KEY, environment="us-east-1")
 index = pinecone.Index(index_name)
 
 # OpenAI API Key
