@@ -20,11 +20,14 @@ client = pymongo.MongoClient(MONGO_URI)
 db = client["helpdesk"]
 pdf_collection = db["pdf_repository"]
 
-# Pinecone Setup using `PC`
+# Load environment variables
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 index_name = "helpdesk"
 
-pc = pinecone.PC(api_key=PINECONE_API_KEY)
+# Initialize Pinecone using the Pinecone class
+pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
+
+# Connect to the Pinecone index
 index = pc.Index(index_name)
 
 # OpenAI API Key
