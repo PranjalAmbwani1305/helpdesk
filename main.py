@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # MongoDB Connection (Optional for Tracking PDFs)
-MONGO_URI = st.secrets["MONGO_URI"]
+MONGO_URI = st.secrets["mongo"]["MONGO_URI"]
 client = pymongo.MongoClient(MONGO_URI)
 db = client["helpdesk"]
 pdf_collection = db["pdf_repository"]
