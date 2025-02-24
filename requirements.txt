@@ -3,7 +3,7 @@ pinecone
 pymongo
 python-dotenv
 pypdf2
-langchain_community
+langchain-community
 langchain
 faiss-cpu
 openai
