@@ -16,12 +16,6 @@ OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
 pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
-if index_name not in pc.list_indexes().names():
-    pc.create_index(
-        name=index_name,
-        dimension=1536,  
-        metric="cosine"
-    )
 
 index = pc.Index(index_name)
 
