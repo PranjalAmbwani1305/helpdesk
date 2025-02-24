@@ -2,7 +2,7 @@ streamlit
 pymongo
 python-dotenv
 pypdf2
-pymupdf langchain
+pymupdf_langchain
 langchain
 faiss-cpu
 openai
