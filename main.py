@@ -1,7 +1,7 @@
 import streamlit as st
 import os
 import pymongo
-from langchain.document_loaders import PyPDFLoader
+from langchain.document_loaders import PyMuPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.vectorstores import FAISS
 from langchain.embeddings.openai import OpenAIEmbeddings
