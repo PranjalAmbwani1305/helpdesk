@@ -12,7 +12,9 @@ load_dotenv()
 # Load API keys
 PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
 OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
-openai.api_key = OPENAI_API_KEY
+
+# Initialize OpenAI client
+openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
 # API key check
 if "OPENAI_API_KEY" in st.secrets:
@@ -45,8 +47,8 @@ def store_vectors(chunks, pdf_name):
         if not chunk.strip():  # Skip empty chunks
             continue
         try:
-            response = openai.Embedding.create(input=[chunk], model="text-embedding-ada-002")
-            vector = response['data'][0]['embedding']
+            response = openai_client.embeddings.create(input=[chunk], model="text-embedding-ada-002")
+            vector = response.data[0].embedding
             index.upsert([(f"{pdf_name}-doc-{i}", vector, {"pdf_name": pdf_name, "text": chunk})])
         except Exception as e:
             st.error(f"Embedding error: {e}")
@@ -54,8 +56,8 @@ def store_vectors(chunks, pdf_name):
 # Query embeddings from Pinecone
 def query_vectors(query, selected_pdf):
     try:
-        response = openai.Embedding.create(input=[query], model="text-embedding-ada-002")
-        vector = response['data'][0]['embedding']
+        response = openai_client.embeddings.create(input=[query], model="text-embedding-ada-002")
+        vector = response.data[0].embedding
 
         results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
         
@@ -65,7 +67,7 @@ def query_vectors(query, selected_pdf):
 
             prompt = f"Based on the following legal document ({selected_pdf}), provide an answer:\n\n{combined_text}\n\nUser's Question: {query}"
 
-            completion = openai.ChatCompletion.create(
+            completion = openai_client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": "You are an AI assistant specialized in legal analysis."},
@@ -73,7 +75,7 @@ def query_vectors(query, selected_pdf):
                 ]
             )
 
-            return completion["choices"][0]["message"]["content"]
+            return completion.choices[0].message.content
         else:
             return "No relevant information found in the selected document."
     except Exception as e:
