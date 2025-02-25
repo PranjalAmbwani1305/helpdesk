@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from deep_translator import GoogleTranslator
 from sentence_transformers import SentenceTransformer
 from transformers import pipeline
+from pinecone import Pinecone
 
 # Load environment variables
 load_dotenv()
@@ -14,14 +15,15 @@ load_dotenv()
 PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
 PINECONE_ENV = st.secrets["PINECONE_ENV"]
 
-# Initialize Pinecone
-pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
+# Initialize Pinecone using the new way
+pc = Pinecone(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
+
 index_name = "helpdesk"
 
-if index_name not in pinecone.list_indexes():
-    pinecone.create_index(name=index_name, dimension=768, metric="cosine")
+if index_name not in pc.list_indexes():
+    pc.create_index(name=index_name, dimension=768, metric="cosine")
 
-index = pinecone.Index(index_name)
+index = pc.Index(index_name)
 
 # Initialize Sentence Transformer for Embeddings
 embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
