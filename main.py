@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from deep_translator import GoogleTranslator  
 from sentence_transformers import SentenceTransformer
 from transformers import pipeline
+import huggingface
 
 # Load environment variables
 load_dotenv()
@@ -13,10 +14,11 @@ load_dotenv()
 # API Keys from .env file
 PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
 PINECONE_ENV = st.secrets["PINECONE_ENV"]
+huggingface_Key = st.secrets["Huggingface_Key"]
 
 # Initialize Hugging Face models
 embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-chatbot = pipeline("text-generation", model="mistralai/Mistral-7B-Instruct")
+chatbot = pipeline("text-generation", model="google/flan-t5-base")
 
 # Initialize Pinecone
 from pinecone import Pinecone
