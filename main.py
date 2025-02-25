@@ -1,8 +1,7 @@
-import os
-import time
 import streamlit as st
 import pinecone
 import PyPDF2
+import os
 import requests
 from dotenv import load_dotenv
 from deep_translator import GoogleTranslator
@@ -22,7 +21,6 @@ PINECONE_ENV = os.getenv("PINECONE_ENV")
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
-# Check if index exists, create if not
 if index_name not in pc.list_indexes().names():
     pc.create_index(name=index_name, dimension=768, metric="cosine")
 
@@ -69,7 +67,7 @@ def query_vectors(query, selected_pdf):
 
 # Generate response using Hugging Face API
 def generate_text(prompt):
-    url = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.1"  # ✅ Updated model
+    url = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B"  # ✅ Use the correct model URL
     headers = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
     payload = {"inputs": prompt, "parameters": {"max_new_tokens": 500, "temperature": 0.7}}
 
@@ -78,6 +76,8 @@ def generate_text(prompt):
     if response.status_code == 200:
         return response.json()[0]["generated_text"]
     else:
+        # Log and inspect the error message
+        print(f"Error details: {response.status_code} - {response.text}")
         return f"Error from Hugging Face API: {response.status_code} - {response.text}"
 
 # Translate text using Google Translator
@@ -116,10 +116,8 @@ else:
 
 if st.button("Get Answer"):
     if selected_pdf and query:
-        # Detect language and translate if necessary
         detected_lang = GoogleTranslator(source="auto", target="en").translate(query)
         
-        # Query the Pinecone vector store
         response = query_vectors(detected_lang, selected_pdf)
 
         if response_lang == "Arabic":
