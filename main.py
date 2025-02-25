@@ -10,7 +10,9 @@ load_dotenv()
 
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
+# Initialize Pinecone
 from pinecone import Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
@@ -24,9 +26,9 @@ if index_name not in pc.list_indexes().names():
 
 index = pc.Index(index_name)
 
-openai.api_key = st.secrets["OPENAI_API_KEY"]
-openai.api_key = os.getenv("OPENAI_API_KEY")
+openai.api_key = OPENAI_API_KEY  # Use only once
 
+# Process PDF and split into chunks
 def process_pdf(pdf_path, chunk_size=500):
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
@@ -35,19 +37,22 @@ def process_pdf(pdf_path, chunk_size=500):
     chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
     return chunks
 
+# Store vector embeddings in Pinecone
 def store_vectors(chunks, pdf_name):
     for i, chunk in enumerate(chunks):
-        vector = openai_client.embeddings.create(input=[chunk], model="text-embedding-ada-002").data[0].embedding
+        response = openai.Embedding.create(input=[chunk], model="text-embedding-ada-002")
+        vector = response["data"][0]["embedding"]
         index.upsert([(f"{pdf_name}-doc-{i}", vector, {"pdf_name": pdf_name, "text": chunk})])
 
+# Query the vector database
 def query_vectors(query, selected_pdf):
-    vector = openai_client.embeddings.create(input=[query], model="text-embedding-ada-002").data[0].embedding
+    response = openai.Embedding.create(input=[query], model="text-embedding-ada-002")
+    vector = response["data"][0]["embedding"]
     
     results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
 
     if results["matches"]:
         matched_texts = [match["metadata"]["text"] for match in results["matches"]]
-
         combined_text = "\n\n".join(matched_texts)
 
         prompt = (
@@ -56,21 +61,23 @@ def query_vectors(query, selected_pdf):
             f"User's Question: {query}"
         )
 
-        response = openai_client.chat.completions.create(
+        response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are an AI assistant specialized in legal analysis."},
                 {"role": "user", "content": prompt}
             ]
-        ).choices[0].message.content
+        )["choices"][0]["message"]["content"]
 
         return response
     else:
         return "No relevant information found in the selected document."
 
+# Translation function
 def translate_text(text, target_language):
     return GoogleTranslator(source="auto", target=target_language).translate(text)
 
+# Streamlit UI
 st.markdown(
     "<h1 style='text-align: center;'>AI-Powered Legal HelpDesk for Saudi Arabia</h1>",
     unsafe_allow_html=True
@@ -87,13 +94,16 @@ if pdf_source == "Upload from PC":
             f.write(uploaded_file.read())
 
         chunks = process_pdf(temp_pdf_path)
-        vector = openai.Embedding.create(input=[chunk], model="text-embedding-ada-002")["data"][0]["embedding"]
+        store_vectors(chunks, uploaded_file.name)  # Store vectors
+
         st.success("PDF uploaded and processed!")
         selected_pdf = uploaded_file.name
 
+# Language selection
 input_lang = st.radio("Choose Input Language", ["English", "Arabic"], index=0)
 response_lang = st.radio("Choose Response Language", ["English", "Arabic"], index=0)
 
+# Query input
 if input_lang == "Arabic":
     query = st.text_input("اسأل سؤالاً (باللغة العربية أو الإنجليزية):", key="query_input")
     query_html = """
@@ -108,6 +118,7 @@ if input_lang == "Arabic":
 else:
     query = st.text_input("Ask a question (in English or Arabic):", key="query_input")
 
+# Generate response
 if st.button("Get Answer"):
     if selected_pdf and query:
         detected_lang = GoogleTranslator(source="auto", target="en").translate(query)
