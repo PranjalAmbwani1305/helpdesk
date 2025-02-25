@@ -7,4 +7,4 @@ python-dotenv
 deep-translator
 sentence-transformers
 huggingface
-requests
+
