@@ -1,5 +1,6 @@
 import streamlit as st
 import pinecone
+from pinecone import Pinecone
 import PyPDF2
 import os
 from dotenv import load_dotenv
