@@ -10,7 +10,14 @@ from deep_translator import GoogleTranslator
 load_dotenv()
 
 PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
-OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
+openai.api_key = st.secrets["OPENAI_API_KEY"]
+
+if "OPENAI_API_KEY" in st.secrets:
+    st.write("✅ OpenAI API Key Loaded")
+else:
+    st.write("❌ OpenAI API Key Not Found")
+
+openai_client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 
 pc = Pinecone(api_key=PINECONE_API_KEY)
