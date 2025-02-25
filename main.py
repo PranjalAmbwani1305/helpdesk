@@ -15,13 +15,14 @@ PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
 PINECONE_ENV = st.secrets["PINECONE_ENV"]
 
 # Initialize Pinecone
-pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
+pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
 index_name = "helpdesk"
 
-if index_name not in pc.list_indexes().names():
-    pc.create_index(name=index_name, dimension=768, metric="cosine")
+# Create Pinecone index if it doesn't exist
+if index_name not in pinecone.list_indexes():
+    pinecone.create_index(name=index_name, dimension=768, metric="cosine")
 
-index = pc.Index(index_name)
+index = pinecone.Index(index_name)
 
 # Initialize Sentence Transformer for Embeddings
 embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
@@ -74,6 +75,7 @@ def translate_text(text, target_language):
 # Streamlit UI
 st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk for Saudi Arabia</h1>", unsafe_allow_html=True)
 
+# PDF Upload
 pdf_source = st.radio("Select PDF Source", ["Upload from PC"])
 selected_pdf = None
 
@@ -89,9 +91,11 @@ if pdf_source == "Upload from PC":
         st.success("PDF uploaded and processed!")
         selected_pdf = uploaded_file.name
 
+# Language Selection
 input_lang = st.radio("Choose Input Language", ["English", "Arabic"], index=0)
 response_lang = st.radio("Choose Response Language", ["English", "Arabic"], index=0)
 
+# Query Input
 if input_lang == "Arabic":
     query = st.text_input("اسأل سؤالاً (باللغة العربية أو الإنجليزية):", key="query_input")
     st.markdown(
@@ -101,6 +105,7 @@ if input_lang == "Arabic":
 else:
     query = st.text_input("Ask a question (in English or Arabic):", key="query_input")
 
+# Handle Answer
 if st.button("Get Answer"):
     if selected_pdf and query:
         detected_lang = GoogleTranslator(source="auto", target="en").translate(query)
