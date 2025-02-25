@@ -27,7 +27,7 @@ index = pc.Index(index_name)
 embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
 # Initialize Hugging Face Model for Text Generation
-chatbot = pipeline("text-generation", model="mistralai/Mistral-7B-Instruct")
+chatbot = pipeline("text-generation", model="distilgpt2")
 
 # Function to process PDFs into text chunks
 def process_pdf(pdf_path, chunk_size=500):
