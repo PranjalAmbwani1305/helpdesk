@@ -6,28 +6,34 @@ from dotenv import load_dotenv
 from deep_translator import GoogleTranslator
 from sentence_transformers import SentenceTransformer
 from transformers import pipeline
-from pinecone import Pinecone
+import torch
 
 # Load environment variables
 load_dotenv()
 
 # Pinecone API Keys from .env file
-PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
-PINECONE_ENV = st.secrets["PINECONE_ENV"]
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+PINECONE_ENV = os.getenv("PINECONE_ENV")
 
-# Initialize Pinecone using the new way
-pc = Pinecone(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
-
+# Initialize Pinecone
+pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
+if index_name not in pc.list_indexes().names():
+    pc.create_index(name=index_name, dimension=768, metric="cosine")
 
 index = pc.Index(index_name)
 
 # Initialize Sentence Transformer for Embeddings
 embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
-# Initialize Mistral Model for Text Generation
-chatbot = pipeline("text-generation", model="mistralai/mistral-7b", device=0)  # Device 0 for GPU if available
+# Check for GPU and load Mistral model
+try:
+    device = 0 if torch.cuda.is_available() else -1  # Use GPU if available
+    chatbot = pipeline("text-generation", model="mistralai/Mixtral-8x7B-Instruct-v0.1", device=device)
+except Exception as e:
+    st.error(f"Error loading AI model: {e}")
+    chatbot = None
 
 # Function to process PDFs into text chunks
 def process_pdf(pdf_path, chunk_size=500):
@@ -61,9 +67,9 @@ def query_vectors(query, selected_pdf):
             f"User's Question: {query}"
         )
 
-        chat_response = chatbot(prompt, max_length=500, truncation=True)[0]["generated_text"]
+        response = chatbot(prompt, max_new_tokens=200, truncation=True)[0]["generated_text"]
 
-        return chat_response
+        return response
     else:
         return "No relevant information found in the selected document."
 
