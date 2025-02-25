@@ -14,7 +14,7 @@ load_dotenv()
 # API Keys from .env file
 PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
 PINECONE_ENV = st.secrets["PINECONE_ENV"]
-huggingface_Key = st.secrets["Huggingface_Key"]
+huggingface_Key = st.secrets["HUGGINGFACE_API_KEY"]
 
 # Initialize Hugging Face models
 embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
