@@ -1,6 +1,6 @@
 import streamlit as st
-import pinecone
 import openai
+import pinecone
 import PyPDF2
 import os
 from dotenv import load_dotenv
@@ -18,17 +18,18 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 client = openai.OpenAI()  # Uses the environment variable OPENAI_API_KEY
 
 # Initialize Pinecone
-pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
+from pinecone import Pinecone
+pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
-if index_name not in pinecone.list_indexes():
-    pinecone.create_index(
+if index_name not in pc.list_indexes().names():
+    pc.create_index(
         name=index_name,
         dimension=384,  # Adjust if needed
         metric="cosine"
     )
 
-index = pinecone.Index(index_name)
+index = pc.Index(index_name)
 
 # Function to process PDFs into text chunks
 def process_pdf(pdf_path, chunk_size=500):
