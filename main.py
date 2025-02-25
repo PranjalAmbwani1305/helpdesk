@@ -21,10 +21,6 @@ pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 
 index_name = "helpdesk"
 
-# Check if index exists, create if not
-if index_name not in pc.list_indexes():
-    pc.create_index(name=index_name, dimension=768, metric="cosine")
-
 index = pc.Index(index_name)
 
 # Initialize Sentence Transformer for Embeddings
