@@ -1,10 +1,11 @@
 import streamlit as st
-import openai
 import pinecone
 import PyPDF2
 import os
 from dotenv import load_dotenv
 from deep_translator import GoogleTranslator  
+from sentence_transformers import SentenceTransformer
+from transformers import pipeline
 
 # Load environment variables
 load_dotenv()
@@ -12,21 +13,20 @@ load_dotenv()
 # API Keys from .env file
 PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
 PINECONE_ENV = st.secrets["PINECONE_ENV"]
-openai.api_key = st.secrets["OPENAI_API_KEY"]
 
-
-# Initialize OpenAI Client
-client = openai.OpenAI()  # Uses the environment variable OPENAI_API_KEY
+# Initialize Hugging Face models
+embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+chatbot = pipeline("text-generation", model="mistralai/Mistral-7B-Instruct")
 
 # Initialize Pinecone
 from pinecone import Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
-index_name = "desk"
+index_name = "helpdesk"
 
 if index_name not in pc.list_indexes().names():
     pc.create_index(
         name=index_name,
-        dimension=1536,  # Adjust if needed
+        dimension=384,  # Adjust if needed
         metric="cosine"
     )
 
@@ -44,14 +44,12 @@ def process_pdf(pdf_path, chunk_size=500):
 # Store PDF content in Pinecone
 def store_vectors(chunks, pdf_name):
     for i, chunk in enumerate(chunks):
-        response = client.embeddings.create(input=[chunk], model="text-embedding-ada-002")
-        vector = response.data[0].embedding
+        vector = embedder.encode(chunk).tolist()
         index.upsert([(f"{pdf_name}-doc-{i}", vector, {"pdf_name": pdf_name, "text": chunk})])
 
 # Query Pinecone for relevant legal information
 def query_vectors(query, selected_pdf):
-    response = client.embeddings.create(input=[query], model="text-embedding-ada-002")
-    vector = response.data[0].embedding
+    vector = embedder.encode(query).tolist()
     
     results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
 
@@ -66,14 +64,7 @@ def query_vectors(query, selected_pdf):
             f"User's Question: {query}"
         )
 
-        chat_response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "You are an AI assistant specialized in legal analysis."},
-                {"role": "user", "content": prompt}
-            ]
-        ).choices[0].message.content
-
+        chat_response = chatbot(prompt, max_length=300)[0]['generated_text']
         return chat_response
     else:
         return "No relevant information found in the selected document."
