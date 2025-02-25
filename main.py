@@ -1,12 +1,11 @@
 import streamlit as st
 import pinecone
-from pinecone import Pinecone
 import PyPDF2
 import os
 from dotenv import load_dotenv
 from deep_translator import GoogleTranslator
 from sentence_transformers import SentenceTransformer
-from transformers import pipeline
+import requests
 
 # Load environment variables
 load_dotenv()
@@ -14,22 +13,18 @@ load_dotenv()
 # Pinecone API Keys from .env file
 PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
 PINECONE_ENV = st.secrets["PINECONE_ENV"]
+HF_API_KEY = st.secrets["HUGGINGFACE_API_KEY"]  # Hugging Face API Key
 
 # Initialize Pinecone instance
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 
 # Check and create index if not exist
 index_name = "helpdesk"
-if index_name not in pc.list_indexes().names():
-    pc.create_index(name=index_name, dimension=768, metric="cosine")
 
 index = pc.Index(index_name)
 
 # Initialize Sentence Transformer for Embeddings
 embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-
-# Initialize Hugging Face Model for Text Generation
-chatbot = pipeline("text-generation", model="distilgpt2")
 
 # Function to process PDFs into text chunks
 def process_pdf(pdf_path, chunk_size=500):
@@ -63,10 +58,18 @@ def query_vectors(query, selected_pdf):
             f"User's Question: {query}"
         )
 
-        # Use max_new_tokens to avoid conflict with input length
-        chat_response = chatbot(prompt, max_new_tokens=500, truncation=True)[0]["generated_text"]
+        # Request to Hugging Face API for text generation
+        headers = {"Authorization": f"Bearer {HF_API_KEY}"}
+        payload = {"inputs": prompt, "parameters": {"max_length": 500, "temperature": 0.7}}
+        
+        response = requests.post("https://api-inference.huggingface.co/models/distilgpt2", headers=headers, json=payload)
 
-        return chat_response
+        if response.status_code == 200:
+            chat_response = response.json()[0]["generated_text"]
+            return chat_response
+        else:
+            return f"Error from Hugging Face API: {response.status_code}"
+
     else:
         return "No relevant information found in the selected document."
 
