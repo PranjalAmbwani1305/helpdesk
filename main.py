@@ -14,16 +14,18 @@ load_dotenv()
 # Pinecone API Keys from .env file
 PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
 PINECONE_ENV = st.secrets["PINECONE_ENV"]
-HF_API_KEY = st.secrets["HUGGINGFACE_API_KEY"]  # Hugging Face API key
+HF_API_KEY = st.secrets["HF_API_KEY"]  # Hugging Face API key
 
-# Initialize Pinecone
-pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
+# Initialize Pinecone instance
+pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
+
 index_name = "helpdesk"
 
-if index_name not in pinecone.list_indexes():
-    pinecone.create_index(name=index_name, dimension=768, metric="cosine")
+# Check if index exists, create if not
+if index_name not in pc.list_indexes():
+    pc.create_index(name=index_name, dimension=768, metric="cosine")
 
-index = pinecone.Index(index_name)
+index = pc.Index(index_name)
 
 # Initialize Sentence Transformer for Embeddings
 embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
