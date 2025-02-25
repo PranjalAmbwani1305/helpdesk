@@ -3,36 +3,31 @@ import pinecone
 import PyPDF2
 import os
 from dotenv import load_dotenv
-from deep_translator import GoogleTranslator  
+from deep_translator import GoogleTranslator
 from sentence_transformers import SentenceTransformer
 from transformers import pipeline
-import huggingface
 
 # Load environment variables
 load_dotenv()
 
-# API Keys from .env file
+# Pinecone API Keys from .env file
 PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
 PINECONE_ENV = st.secrets["PINECONE_ENV"]
-huggingface_Key = st.secrets["HUGGINGFACE_API_KEY"]
-
-# Initialize Hugging Face models
-embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-chatbot = pipeline("text-generation", model="google/flan-t5-base")
 
 # Initialize Pinecone
-from pinecone import Pinecone
-pc = Pinecone(api_key=PINECONE_API_KEY)
+pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
 if index_name not in pc.list_indexes().names():
-    pc.create_index(
-        name=index_name,
-        dimension=384,  # Adjust if needed
-        metric="cosine"
-    )
+    pc.create_index(name=index_name, dimension=768, metric="cosine")
 
 index = pc.Index(index_name)
+
+# Initialize Sentence Transformer for Embeddings
+embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+
+# Initialize Hugging Face Model for Text Generation
+chatbot = pipeline("text-generation", model="mistralai/Mistral-7B-Instruct")
 
 # Function to process PDFs into text chunks
 def process_pdf(pdf_path, chunk_size=500):
@@ -66,7 +61,8 @@ def query_vectors(query, selected_pdf):
             f"User's Question: {query}"
         )
 
-        chat_response = chatbot(prompt, max_length=300)[0]['generated_text']
+        chat_response = chatbot(prompt, max_length=500, truncation=True)[0]["generated_text"]
+
         return chat_response
     else:
         return "No relevant information found in the selected document."
