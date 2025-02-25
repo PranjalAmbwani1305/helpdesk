@@ -10,9 +10,10 @@ from deep_translator import GoogleTranslator
 load_dotenv()
 
 # API Keys from .env file
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-PINECONE_ENV = os.getenv("PINECONE_ENV")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
+PINECONE_ENV = st.serects["PINECONE_ENV"]
+openai.api_key = st.secrets["OPENAI_API_KEY"]
+
 
 # Initialize OpenAI Client
 client = openai.OpenAI()  # Uses the environment variable OPENAI_API_KEY
