@@ -14,15 +14,15 @@ load_dotenv()
 PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
 PINECONE_ENV = st.secrets["PINECONE_ENV"]
 
-# Initialize Pinecone
-pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
+# Initialize Pinecone instance
+pc = Pinecone(api_key=PINECONE_API_KEY)
+
+# Check and create index if not exist
 index_name = "helpdesk"
+if index_name not in pc.list_indexes().names():
+    pc.create_index(name=index_name, dimension=768, metric="cosine")
 
-# Create Pinecone index if it doesn't exist
-if index_name not in pinecone.list_indexes():
-    pinecone.create_index(name=index_name, dimension=768, metric="cosine")
-
-index = pinecone.Index(index_name)
+index = pc.Index(index_name)
 
 # Initialize Sentence Transformer for Embeddings
 embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
