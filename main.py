@@ -11,11 +11,11 @@ from PyPDF2 import PdfReader
 load_dotenv()
 
 # Hugging Face API Key
-HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
+HUGGINGFACE_API_KEY = st.secret["HUGGINGFACE_API_KEY"]
 
 # Pinecone API Keys
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-PINECONE_ENV = os.getenv("PINECONE_ENV")
+PINECONE_API_KEY = st.secret["PINECONE_API_KEY"]
+PINECONE_ENV = st.sectret["PINECONE_ENV"]
 
 # Initialize Pinecone
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
