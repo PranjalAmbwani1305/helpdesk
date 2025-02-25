@@ -1,6 +1,5 @@
 import streamlit as st
 import pinecone
-from pinecone import Pinecone
 import PyPDF2
 import os
 from dotenv import load_dotenv
@@ -63,7 +62,8 @@ def query_vectors(query, selected_pdf):
             f"User's Question: {query}"
         )
 
-        chat_response = chatbot(prompt, max_length=500, truncation=True)[0]["generated_text"]
+        # Use max_new_tokens to avoid conflict with input length
+        chat_response = chatbot(prompt, max_new_tokens=500, truncation=True)[0]["generated_text"]
 
         return chat_response
     else:
