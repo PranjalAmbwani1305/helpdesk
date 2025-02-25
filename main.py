@@ -2,18 +2,18 @@ import streamlit as st
 import pinecone
 import PyPDF2
 import os
+import requests
 from dotenv import load_dotenv
 from deep_translator import GoogleTranslator
 from sentence_transformers import SentenceTransformer
-from transformers import pipeline
-import torch
 
 # Load environment variables
 load_dotenv()
 
-# Pinecone API Keys from .env file
+# Securely fetch API keys
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
+HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")  # Hugging Face API Key
 
 # Initialize Pinecone
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
@@ -27,13 +27,18 @@ index = pc.Index(index_name)
 # Initialize Sentence Transformer for Embeddings
 embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
-# Check for GPU and load Mistral model
-try:
-    device = 0 if torch.cuda.is_available() else -1  # Use GPU if available
-    chatbot = pipeline("text-generation", model="mistralai/Mixtral-8x7B-Instruct-v0.1", device=device)
-except Exception as e:
-    st.error(f"Error loading AI model: {e}")
-    chatbot = None
+# Function to call Hugging Face API for text generation
+def generate_text(prompt):
+    url = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct"
+    headers = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
+    payload = {"inputs": prompt, "parameters": {"max_new_tokens": 500, "temperature": 0.7}}
+
+    response = requests.post(url, headers=headers, json=payload)
+
+    if response.status_code == 200:
+        return response.json()[0]["generated_text"]
+    else:
+        return f"Error from Hugging Face API: {response.status_code} - {response.text}"
 
 # Function to process PDFs into text chunks
 def process_pdf(pdf_path, chunk_size=500):
@@ -58,7 +63,6 @@ def query_vectors(query, selected_pdf):
 
     if results["matches"]:
         matched_texts = [match["metadata"]["text"] for match in results["matches"]]
-
         combined_text = "\n\n".join(matched_texts)
 
         prompt = (
@@ -67,9 +71,8 @@ def query_vectors(query, selected_pdf):
             f"User's Question: {query}"
         )
 
-        response = chatbot(prompt, max_new_tokens=200, truncation=True)[0]["generated_text"]
-
-        return response
+        chat_response = generate_text(prompt)
+        return chat_response
     else:
         return "No relevant information found in the selected document."
 
@@ -110,7 +113,6 @@ else:
 if st.button("Get Answer"):
     if selected_pdf and query:
         detected_lang = GoogleTranslator(source="auto", target="en").translate(query)
-        
         response = query_vectors(detected_lang, selected_pdf)
 
         if response_lang == "Arabic":
