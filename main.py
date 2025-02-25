@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from deep_translator import GoogleTranslator
 from sentence_transformers import SentenceTransformer
 import requests
+import huggingface
 
 # Load environment variables
 load_dotenv()
