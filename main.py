@@ -1,5 +1,6 @@
 import streamlit as st
 import pinecone
+from pinecone import Pinecone
 import PyPDF2
 import os
 from dotenv import load_dotenv
@@ -15,7 +16,7 @@ PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
 PINECONE_ENV = st.secrets["PINECONE_ENV"]
 
 # Initialize Pinecone instance
-pc = Pinecone(api_key=PINECONE_API_KEY)
+pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 
 # Check and create index if not exist
 index_name = "helpdesk"
