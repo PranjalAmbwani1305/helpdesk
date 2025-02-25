@@ -14,7 +14,7 @@ load_dotenv()
 # Pinecone API Keys from .env file
 PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
 PINECONE_ENV = st.secrets["PINECONE_ENV"]
-HF_API_KEY = st.secrets["HF_API_KEY"]  # Hugging Face API key
+HF_API_KEY = st.secrets["HUGGINGFACE_API_KEY"]  # Hugging Face API key
 
 # Initialize Pinecone
 pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
