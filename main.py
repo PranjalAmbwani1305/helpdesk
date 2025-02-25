@@ -11,7 +11,7 @@ load_dotenv()
 
 # API Keys from .env file
 PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
-PINECONE_ENV = st.serects["PINECONE_ENV"]
+PINECONE_ENV = st.secrets["PINECONE_ENV"]
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 
