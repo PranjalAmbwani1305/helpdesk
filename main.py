@@ -84,7 +84,7 @@ if pdf_source == "Upload from PC":
             f.write(uploaded_file.read())
 
         chunks = process_pdf(temp_pdf_path)
-        store_vectors(chunks, uploaded_file.name)
+        vector = openai_client.embeddings.create(input=[chunk], model="text-embedding-ada-002").data[0].embedding
         st.success("PDF uploaded and processed!")
         selected_pdf = uploaded_file.name
 
