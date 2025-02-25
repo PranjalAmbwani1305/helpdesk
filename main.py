@@ -2,11 +2,10 @@ import streamlit as st
 import pinecone
 import PyPDF2
 import os
-import time
 from dotenv import load_dotenv
 from deep_translator import GoogleTranslator
 from sentence_transformers import SentenceTransformer
-import requests
+from transformers import pipeline
 
 # Load environment variables
 load_dotenv()
@@ -14,17 +13,21 @@ load_dotenv()
 # Pinecone API Keys from .env file
 PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
 PINECONE_ENV = st.secrets["PINECONE_ENV"]
-HF_API_KEY = st.secrets["HUGGINGFACE_API_KEY"]  # Hugging Face API key
 
-# Initialize Pinecone instance
-pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
-
+# Initialize Pinecone
+pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
 index_name = "helpdesk"
 
-index = pc.Index(index_name)
+if index_name not in pinecone.list_indexes():
+    pinecone.create_index(name=index_name, dimension=768, metric="cosine")
+
+index = pinecone.Index(index_name)
 
 # Initialize Sentence Transformer for Embeddings
 embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+
+# Initialize Mistral Model for Text Generation
+chatbot = pipeline("text-generation", model="mistralai/mistral-7b", device=0)  # Device 0 for GPU if available
 
 # Function to process PDFs into text chunks
 def process_pdf(pdf_path, chunk_size=500):
@@ -58,24 +61,9 @@ def query_vectors(query, selected_pdf):
             f"User's Question: {query}"
         )
 
-        # Retry logic for Hugging Face API request
-        headers = {"Authorization": f"Bearer {HF_API_KEY}"}
-        payload = {"inputs": prompt, "parameters": {"max_length": 500, "temperature": 0.7}}
-        
-        retry_count = 3
-        for _ in range(retry_count):
-            response = requests.post("https://api-inference.huggingface.co/models/distilgpt2", headers=headers, json=payload)
+        chat_response = chatbot(prompt, max_length=500, truncation=True)[0]["generated_text"]
 
-            if response.status_code == 200:
-                return response.json()[0]["generated_text"]
-            elif response.status_code == 503:
-                print("503 error, retrying...")
-                time.sleep(5)  # Wait before retrying
-            else:
-                return f"Error from Hugging Face API: {response.status_code}"
-
-        return "Hugging Face API is still unavailable, please try again later."
-
+        return chat_response
     else:
         return "No relevant information found in the selected document."
 
