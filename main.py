@@ -1,19 +1,21 @@
 import streamlit as st
 import pinecone
-import PyPDF2
-import os
 import requests
+import os
 from dotenv import load_dotenv
 from deep_translator import GoogleTranslator
 from sentence_transformers import SentenceTransformer
+from PyPDF2 import PdfReader
 
 # Load environment variables
 load_dotenv()
 
-# Securely fetch API keys
-PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
-PINECONE_ENV = st.secrets["PINECONE_ENV"]
-HUGGINGFACE_API_KEY = st.secrets["HUGGINGFACE_API_KEY"]  # Hugging Face API Key
+# Hugging Face API Key
+HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
+
+# Pinecone API Keys
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+PINECONE_ENV = os.getenv("PINECONE_ENV")
 
 # Initialize Pinecone
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
@@ -24,12 +26,12 @@ if index_name not in pc.list_indexes().names():
 
 index = pc.Index(index_name)
 
-# Initialize Sentence Transformer for Embeddings
+# Sentence Transformer for Embeddings
 embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
-# Function to call Hugging Face API for text generation
+# Function to query Mistral via Hugging Face API
 def generate_text(prompt):
-    url = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct"
+    url = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B"
     headers = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
     payload = {"inputs": prompt, "parameters": {"max_new_tokens": 500, "temperature": 0.7}}
 
@@ -43,11 +45,10 @@ def generate_text(prompt):
 # Function to process PDFs into text chunks
 def process_pdf(pdf_path, chunk_size=500):
     with open(pdf_path, "rb") as file:
-        reader = PyPDF2.PdfReader(file)
+        reader = PdfReader(file)
         text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
     
-    chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
-    return chunks
+    return [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
 
 # Store PDF content in Pinecone
 def store_vectors(chunks, pdf_name):
@@ -55,7 +56,7 @@ def store_vectors(chunks, pdf_name):
         vector = embedder.encode(chunk).tolist()
         index.upsert([(f"{pdf_name}-doc-{i}", vector, {"pdf_name": pdf_name, "text": chunk})])
 
-# Query Pinecone for relevant legal information
+# Query Pinecone for legal information
 def query_vectors(query, selected_pdf):
     vector = embedder.encode(query).tolist()
     
@@ -64,15 +65,9 @@ def query_vectors(query, selected_pdf):
     if results["matches"]:
         matched_texts = [match["metadata"]["text"] for match in results["matches"]]
         combined_text = "\n\n".join(matched_texts)
+        prompt = f"Based on the following legal document ({selected_pdf}), provide an accurate response:\n\n{combined_text}\n\nUser's Question: {query}"
 
-        prompt = (
-            f"Based on the following legal document ({selected_pdf}), provide an accurate and well-reasoned answer:\n\n"
-            f"{combined_text}\n\n"
-            f"User's Question: {query}"
-        )
-
-        chat_response = generate_text(prompt)
-        return chat_response
+        return generate_text(prompt)
     else:
         return "No relevant information found in the selected document."
 
@@ -81,7 +76,7 @@ def translate_text(text, target_language):
     return GoogleTranslator(source="auto", target=target_language).translate(text)
 
 # Streamlit UI
-st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk for Saudi Arabia</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk (Mistral-7B)</h1>", unsafe_allow_html=True)
 
 pdf_source = st.radio("Select PDF Source", ["Upload from PC"])
 selected_pdf = None
@@ -103,16 +98,14 @@ response_lang = st.radio("Choose Response Language", ["English", "Arabic"], inde
 
 if input_lang == "Arabic":
     query = st.text_input("اسأل سؤالاً (باللغة العربية أو الإنجليزية):", key="query_input")
-    st.markdown(
-        "<style>.stTextInput>div>div>input { direction: rtl; text-align: right; }</style>",
-        unsafe_allow_html=True
-    )
+    st.markdown("<style>.stTextInput>div>div>input { direction: rtl; text-align: right; }</style>", unsafe_allow_html=True)
 else:
     query = st.text_input("Ask a question (in English or Arabic):", key="query_input")
 
 if st.button("Get Answer"):
     if selected_pdf and query:
         detected_lang = GoogleTranslator(source="auto", target="en").translate(query)
+        
         response = query_vectors(detected_lang, selected_pdf)
 
         if response_lang == "Arabic":
