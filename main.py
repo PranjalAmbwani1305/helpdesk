@@ -1,33 +1,31 @@
 import streamlit as st
 import pinecone
-from pinecone import Pinecone
 import openai
 import PyPDF2
 import os
 from dotenv import load_dotenv
 from deep_translator import GoogleTranslator  
 
-# Load environment variables
 load_dotenv()
 
-# Retrieve API keys
-PINECONE_API_KEY = st.secrets.get("PINECONE_API_KEY", None)
-OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", None)
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+PINECONE_ENV = os.getenv("PINECONE_ENV")
 
-if not PINECONE_API_KEY:
-    st.error("❌ Pinecone API Key is missing!")
-if not OPENAI_API_KEY:
-    st.error("❌ OpenAI API Key is missing!")
-
-# Initialize OpenAI client
-openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
-
-# Initialize Pinecone
+from pinecone import Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
+
+if index_name not in pc.list_indexes().names():
+    pc.create_index(
+        name=index_name,
+        dimension=384,  
+        metric="cosine"
+    )
+
 index = pc.Index(index_name)
 
-# Function to process PDF and split into chunks
+openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
 def process_pdf(pdf_path, chunk_size=500):
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
@@ -36,26 +34,19 @@ def process_pdf(pdf_path, chunk_size=500):
     chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
     return chunks
 
-# Store vectors in Pinecone
 def store_vectors(chunks, pdf_name):
     for i, chunk in enumerate(chunks):
-        response = openai_client.embeddings.create(
-            input=[chunk], model="text-embedding-ada-002"
-        )
-        vector = response.data[0].embedding
+        vector = openai_client.embeddings.create(input=[chunk], model="text-embedding-ada-002").data[0].embedding
         index.upsert([(f"{pdf_name}-doc-{i}", vector, {"pdf_name": pdf_name, "text": chunk})])
 
-# Query Pinecone for similar content
 def query_vectors(query, selected_pdf):
-    response = openai_client.embeddings.create(
-        input=[query], model="text-embedding-ada-002"
-    )
-    vector = response.data[0].embedding
+    vector = openai_client.embeddings.create(input=[query], model="text-embedding-ada-002").data[0].embedding
     
     results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
 
     if results["matches"]:
         matched_texts = [match["metadata"]["text"] for match in results["matches"]]
+
         combined_text = "\n\n".join(matched_texts)
 
         prompt = (
@@ -70,23 +61,21 @@ def query_vectors(query, selected_pdf):
                 {"role": "system", "content": "You are an AI assistant specialized in legal analysis."},
                 {"role": "user", "content": prompt}
             ]
-        )
-        return response.choices[0].message.content
+        ).choices[0].message.content
+
+        return response
     else:
         return "No relevant information found in the selected document."
 
-# Translate text
 def translate_text(text, target_language):
     return GoogleTranslator(source="auto", target=target_language).translate(text)
 
-# Streamlit UI
 st.markdown(
     "<h1 style='text-align: center;'>AI-Powered Legal HelpDesk for Saudi Arabia</h1>",
     unsafe_allow_html=True
 )
 
 pdf_source = st.radio("Select PDF Source", ["Upload from PC"])
-
 selected_pdf = None
 
 if pdf_source == "Upload from PC":
@@ -98,7 +87,7 @@ if pdf_source == "Upload from PC":
 
         chunks = process_pdf(temp_pdf_path)
         store_vectors(chunks, uploaded_file.name)
-        st.success("✅ PDF uploaded and processed!")
+        st.success("PDF uploaded and processed!")
         selected_pdf = uploaded_file.name
 
 input_lang = st.radio("Choose Input Language", ["English", "Arabic"], index=0)
@@ -106,10 +95,15 @@ response_lang = st.radio("Choose Response Language", ["English", "Arabic"], inde
 
 if input_lang == "Arabic":
     query = st.text_input("اسأل سؤالاً (باللغة العربية أو الإنجليزية):", key="query_input")
-    st.markdown(
-        "<style>.stTextInput>div>div>input { direction: rtl; text-align: right; }</style>",
-        unsafe_allow_html=True
-    )
+    query_html = """
+    <style>
+    .stTextInput>div>div>input {
+        direction: rtl;
+        text-align: right;
+    }
+    </style>
+    """
+    st.markdown(query_html, unsafe_allow_html=True)
 else:
     query = st.text_input("Ask a question (in English or Arabic):", key="query_input")
 
@@ -125,4 +119,4 @@ if st.button("Get Answer"):
         else:
             st.write(f"**Answer:** {response}")
     else:
-        st.warning("⚠️ Please enter a query and select a PDF.")
+        st.warning("Please enter a query and select a PDF.")
