@@ -21,12 +21,12 @@ client = openai.OpenAI()  # Uses the environment variable OPENAI_API_KEY
 # Initialize Pinecone
 from pinecone import Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
-index_name = "helpdesk"
+index_name = "desk"
 
 if index_name not in pc.list_indexes().names():
     pc.create_index(
         name=index_name,
-        dimension=384,  # Adjust if needed
+        dimension=1536,  # Adjust if needed
         metric="cosine"
     )
 
