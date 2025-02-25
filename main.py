@@ -24,7 +24,8 @@ if index_name not in pc.list_indexes().names():
 
 index = pc.Index(index_name)
 
-openai_client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+openai.api_key = st.secrets["OPENAI_API_KEY"]
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 def process_pdf(pdf_path, chunk_size=500):
     with open(pdf_path, "rb") as file:
