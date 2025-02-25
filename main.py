@@ -10,14 +10,14 @@ from sentence_transformers import SentenceTransformer
 # Load environment variables
 load_dotenv()
 
-# Hugging Face API Key
-HUGGINGFACE_API_KEY = st.secrets["HUGGINGFACE_API_KEY"]
+# Hugging Face API Key (Store in Secrets or .env)
+HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 
 # Pinecone API Keys from .env file
-PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
-PINECONE_ENV = st.secrets["PINECONE_ENV"]
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+PINECONE_ENV = os.getenv("PINECONE_ENV")
 
-# Initialize Pinecone
+# Initialize Pinecone Properly
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
@@ -52,6 +52,7 @@ def query_vectors(query, selected_pdf):
 
     if results["matches"]:
         matched_texts = [match["metadata"]["text"] for match in results["matches"]]
+
         combined_text = "\n\n".join(matched_texts)
 
         prompt = (
@@ -64,7 +65,7 @@ def query_vectors(query, selected_pdf):
     else:
         return "No relevant information found in the selected document."
 
-# Generate text using Hugging Face API
+# Generate response using Hugging Face API
 def generate_text(prompt):
     url = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.1"  # ✅ Updated model
     headers = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
