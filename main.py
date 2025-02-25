@@ -1,7 +1,8 @@
+import os
+import time
 import streamlit as st
 import pinecone
 import PyPDF2
-import os
 import requests
 from dotenv import load_dotenv
 from deep_translator import GoogleTranslator
@@ -21,6 +22,7 @@ PINECONE_ENV = os.getenv("PINECONE_ENV")
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
+# Check if index exists, create if not
 if index_name not in pc.list_indexes().names():
     pc.create_index(name=index_name, dimension=768, metric="cosine")
 
@@ -114,8 +116,10 @@ else:
 
 if st.button("Get Answer"):
     if selected_pdf and query:
+        # Detect language and translate if necessary
         detected_lang = GoogleTranslator(source="auto", target="en").translate(query)
         
+        # Query the Pinecone vector store
         response = query_vectors(detected_lang, selected_pdf)
 
         if response_lang == "Arabic":
