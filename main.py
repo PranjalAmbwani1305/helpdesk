@@ -11,9 +11,9 @@ from sentence_transformers import SentenceTransformer
 load_dotenv()
 
 # Securely fetch API keys
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-PINECONE_ENV = os.getenv("PINECONE_ENV")
-HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")  # Hugging Face API Key
+PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
+PINECONE_ENV = st.secrets["PINECONE_ENV"]
+HUGGINGFACE_API_KEY = st.secrets["HUGGINGFACE_API_KEY"]  # Hugging Face API Key
 
 # Initialize Pinecone
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
