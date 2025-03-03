@@ -17,14 +17,9 @@ HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
 
-# ✅ Initialize Pinecone
-pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
 index_name = "helpdesk"
 
-# ✅ Ensure the index exists
-if index_name not in pinecone.list_indexes():
-    pinecone.create_index(name=index_name, dimension=768, metric="cosine")
-index = pinecone.Index(index_name)
+index = pc.Index(index_name)
 
 # ✅ Initialize Hugging Face Embeddings
 embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
