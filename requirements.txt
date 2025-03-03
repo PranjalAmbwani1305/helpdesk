@@ -8,3 +8,4 @@ deep-translator
 sentence-transformers
 huggingface
 streamlit-chat
+langchain
