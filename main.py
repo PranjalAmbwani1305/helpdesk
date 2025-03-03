@@ -10,21 +10,23 @@ from sentence_transformers import SentenceTransformer
 # Load environment variables
 load_dotenv()
 
-# Hugging Face API Key
+# Hugging Face API Key (Store in Secrets or .env)
 HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 
-# Pinecone API Keys
+# Pinecone API Keys from .env file
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
 
-# Initialize Pinecone
+# Initialize Pinecone Properly
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
+
 if index_name not in pc.list_indexes().names():
     pc.create_index(name=index_name, dimension=768, metric="cosine")
+
 index = pc.Index(index_name)
 
-# Initialize Sentence Transformer
+# Initialize Sentence Transformer for Embeddings
 embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
 # Function to process PDFs into text chunks
@@ -32,6 +34,7 @@ def process_pdf(pdf_path, chunk_size=500):
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
         text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
+    
     chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
     return chunks
 
@@ -44,22 +47,32 @@ def store_vectors(chunks, pdf_name):
 # Query Pinecone for relevant legal information
 def query_vectors(query, selected_pdf):
     vector = embedder.encode(query).tolist()
+    
     results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
+
     if results["matches"]:
         matched_texts = [match["metadata"]["text"] for match in results["matches"]]
+
         combined_text = "\n\n".join(matched_texts)
-        prompt = (f"Based on the following legal document ({selected_pdf}), provide an accurate and well-reasoned answer:\n\n"
-                  f"{combined_text}\n\nUser's Question: {query}")
+
+        prompt = (
+            f"Based on the following legal document ({selected_pdf}), provide an accurate and well-reasoned answer:\n\n"
+            f"{combined_text}\n\n"
+            f"User's Question: {query}"
+        )
+
         return generate_text(prompt)
     else:
         return "No relevant information found in the selected document."
 
-# Generate response using Hugging Face API
+# Generate response using Hugging Face API (Updated Model: Zephyr-7B)
 def generate_text(prompt):
-    url = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-v0.1"  # ✅ Corrected model name
+    url = "https://api-inference.huggingface.co/models/HuggingFaceH4/zephyr-7b-beta"  # ✅ Updated model
     headers = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
     payload = {"inputs": prompt, "parameters": {"max_new_tokens": 500, "temperature": 0.7}}
+
     response = requests.post(url, headers=headers, json=payload)
+
     if response.status_code == 200:
         return response.json()[0]["generated_text"]
     else:
@@ -75,12 +88,14 @@ st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk for Saudi
 
 pdf_source = st.radio("Select PDF Source", ["Upload from PC"])
 selected_pdf = None
+
 if pdf_source == "Upload from PC":
     uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
     if uploaded_file:
         temp_pdf_path = f"temp_{uploaded_file.name}"
         with open(temp_pdf_path, "wb") as f:
             f.write(uploaded_file.read())
+
         chunks = process_pdf(temp_pdf_path)
         store_vectors(chunks, uploaded_file.name)
         st.success("PDF uploaded and processed!")
@@ -88,15 +103,26 @@ if pdf_source == "Upload from PC":
 
 input_lang = st.radio("Choose Input Language", ["English", "Arabic"], index=0)
 response_lang = st.radio("Choose Response Language", ["English", "Arabic"], index=0)
-query = st.text_input("Ask a question (in English or Arabic):") if input_lang == "English" else st.text_input("اسأل سؤالاً (باللغة العربية أو الإنجليزية):")
+
+if input_lang == "Arabic":
+    query = st.text_input("اسأل سؤالاً (باللغة العربية أو الإنجليزية):", key="query_input")
+    st.markdown(
+        "<style>.stTextInput>div>div>input { direction: rtl; text-align: right; }</style>",
+        unsafe_allow_html=True
+    )
+else:
+    query = st.text_input("Ask a question (in English or Arabic):", key="query_input")
+
 if st.button("Get Answer"):
     if selected_pdf and query:
         detected_lang = GoogleTranslator(source="auto", target="en").translate(query)
+        
         response = query_vectors(detected_lang, selected_pdf)
+
         if response_lang == "Arabic":
             response = translate_text(response, "ar")
             st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
         else:
             st.write(f"**Answer:** {response}")
     else:
-        st.warning("Please enter a query and select a PDF.")
+        st.warning("Please enter a query and select a PDF.")      
