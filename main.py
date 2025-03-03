@@ -1,5 +1,4 @@
 import streamlit as st
-import pinecone
 import PyPDF2
 import os
 from dotenv import load_dotenv
@@ -9,24 +8,20 @@ from langchain.vectorstores import Pinecone
 from langchain.chat_models import ChatOpenAI
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
+from pinecone import Pinecone  # ✅ Using the correct Pinecone import
 
 # ✅ Load environment variables
 load_dotenv()
 
 # ✅ API Keys
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-PINECONE_ENV = os.getenv("PINECONE_ENV")
 HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 
-# ✅ Initialize Pinecone
-pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
-index_name = "pdf-qna"
+# ✅ Initialize Pinecone (Using Correct Method)
+pc = Pinecone(api_key=PINECONE_API_KEY)
+index_name = "helpdesk"
 
-# ✅ Ensure the Pinecone index exists
-if index_name not in pinecone.list_indexes():
-    pinecone.create_index(name=index_name, dimension=768, metric="cosine")
-
-index = pinecone.Index(index_name)
+index = pc.Index(index_name)  # ✅ Corrected Pinecone Index Access
 
 # ✅ Initialize Hugging Face Embeddings
 embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
