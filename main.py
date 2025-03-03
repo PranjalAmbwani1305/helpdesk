@@ -7,7 +7,13 @@ from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.prompts import PromptTemplate
 import pinecone
 import os
+import sys
 from dotenv import load_dotenv
+
+# Ensure Python can find utils.py
+sys.path.append(os.path.dirname(__file__))
+
+# Import local utils module
 from utils import get_conversation_string, query_refiner, find_match
 
 # Load environment variables
