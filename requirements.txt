@@ -9,3 +9,5 @@ sentence-transformers
 huggingface
 streamlit-chat
 langchain
+langchain huggingface_hub
+langchain-community
