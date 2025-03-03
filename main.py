@@ -19,7 +19,7 @@ PINECONE_ENV = os.getenv("PINECONE_ENV")
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
-
+index = pc.Index(index_name)
 # Load Sentence Transformer model for embeddings
 embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
