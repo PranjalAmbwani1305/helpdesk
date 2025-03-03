@@ -1,13 +1,9 @@
 streamlit
-pinecone
-pinecone-client
-pypdf2
-requests
-python-dotenv
-deep-translator
-sentence-transformers
-huggingface
 streamlit-chat
 langchain
-langchain huggingface_hub
 langchain-community
+langchain-huggingface
+huggingface-hub
+sentence-transformers
+pinecone-client
+python-dotenv
