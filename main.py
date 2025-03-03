@@ -53,9 +53,10 @@ def query_vectors(query, selected_pdf):
         matched_texts = [match["metadata"]["text"] for match in results["matches"]]
         extracted_answer = "\n\n".join(matched_texts)
         
-        # Extract the most relevant section
-        extracted_answer = extracted_answer.split("Article ")[-1]  # Keeps only the most relevant article
-        extracted_answer = "Article " + extracted_answer  # Adds back "Article" heading
+        # Extract the correct section by keyword matching
+        if "Chapter One: General Principles" in extracted_answer:
+            extracted_answer = extracted_answer.split("Chapter One: General Principles")[-1]
+            extracted_answer = "Chapter One: General Principles" + extracted_answer
         
         return f"**Extracted Answer from Document:**\n\n{extracted_answer}"
     else:
