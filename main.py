@@ -17,12 +17,8 @@ PINECONE_ENV = os.getenv("PINECONE_ENV")
 
 # Initialize Pinecone
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
-index_name = "legal-helpdesk"
+index_name = "helpdesk"
 
-# Create index if not exists
-if index_name not in pc.list_indexes().names():
-    pc.create_index(name=index_name, dimension=768, metric="cosine")
-index = pc.Index(index_name)
 
 # Load Sentence Transformer model for embeddings
 embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
