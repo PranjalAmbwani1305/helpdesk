@@ -20,7 +20,7 @@ PINECONE_ENV = os.getenv("PINECONE_ENV")  # Ensure correct Pinecone environment
 
 # Initialize Pinecone
 pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
-index_name = "legal-articles"  # Ensure you have created this Pinecone index
+index_name = "helpdesk"  # Ensure you have created this Pinecone index
 
 # Initialize Hugging Face Embeddings
 embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
