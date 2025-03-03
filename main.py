@@ -1,25 +1,32 @@
 import streamlit as st
-from streamlit_chat import message
-from langchain.chat_models import ChatOpenAI
-from langchain.chains import RetrievalQA
-from langchain.vectorstores import Pinecone
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.prompts import PromptTemplate
 import pinecone
+import PyPDF2
 import os
 from dotenv import load_dotenv
+from deep_translator import GoogleTranslator
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.vectorstores import Pinecone
+from langchain.chat_models import ChatOpenAI
+from langchain.chains import RetrievalQA
+from langchain.prompts import PromptTemplate
 
 # ✅ Load environment variables
 load_dotenv()
 
 # ✅ API Keys
-HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
+HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 
-index_name = "helpdesk"
+# ✅ Initialize Pinecone
+pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
+index_name = "pdf-qna"
 
-index = pc.Index(index_name)
+# ✅ Ensure the Pinecone index exists
+if index_name not in pinecone.list_indexes():
+    pinecone.create_index(name=index_name, dimension=768, metric="cosine")
+
+index = pinecone.Index(index_name)
 
 # ✅ Initialize Hugging Face Embeddings
 embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
@@ -28,7 +35,7 @@ embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-Mi
 vector_store = Pinecone.from_existing_index(index_name, embedding_model)
 
 # ✅ Retrieval-based QA using Pinecone
-retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 1})
+retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 3})
 
 # ✅ Hugging Face Model for Answer Generation
 llm = ChatOpenAI(model_name="mistralai/Mistral-7B-Instruct-v0.1", openai_api_key=HUGGINGFACE_API_KEY)
@@ -46,32 +53,56 @@ qa_chain = RetrievalQA.from_chain_type(
     chain_type_kwargs={"prompt": prompt_template}
 )
 
+# ✅ Function to Process PDFs into Text Chunks
+def process_pdf(pdf_path, chunk_size=500):
+    with open(pdf_path, "rb") as file:
+        reader = PyPDF2.PdfReader(file)
+        text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
+    
+    chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+    return chunks
+
+# ✅ Store PDF Chunks in Pinecone
+def store_vectors(chunks, pdf_name):
+    for i, chunk in enumerate(chunks):
+        vector = embedding_model.embed_documents([chunk])[0]
+        index.upsert([(f"{pdf_name}-doc-{i}", vector, {"pdf_name": pdf_name, "text": chunk})])
+
 # ✅ Streamlit UI
-st.markdown("<h1 style='text-align: center; color: #2E3B55;'>⚖️ AI-Powered Legal Chatbot</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center;'>⚖️ AI-Powered Legal HelpDesk</h1>", unsafe_allow_html=True)
 
-if 'responses' not in st.session_state:
-    st.session_state['responses'] = ["Hello! Enter the chapter/article number to retrieve the exact text."]
+pdf_source = st.radio("Select PDF Source", ["Upload from PC"])
+selected_pdf = None
 
-if 'requests' not in st.session_state:
-    st.session_state['requests'] = []
+if pdf_source == "Upload from PC":
+    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
+    if uploaded_file:
+        temp_pdf_path = f"temp_{uploaded_file.name}"
+        with open(temp_pdf_path, "wb") as f:
+            f.write(uploaded_file.read())
 
-# ✅ Chat UI Containers
-response_container = st.container()
-textcontainer = st.container()
+        chunks = process_pdf(temp_pdf_path)
+        store_vectors(chunks, uploaded_file.name)
+        st.success("✅ PDF uploaded and processed successfully!")
+        selected_pdf = uploaded_file.name
 
-with textcontainer:
-    query = st.text_input("Enter chapter/article number (e.g., 'Chapter 5' or 'Article 22'):", key="input")
-    if query:
-        with st.spinner("Retrieving legal text..."):
-            response = qa_chain.run(query)
+# ✅ Language Selection
+input_lang = st.radio("Choose Input Language", ["English", "Arabic"], index=0)
+response_lang = st.radio("Choose Response Language", ["English", "Arabic"], index=0)
 
-        # ✅ Store conversation in session state
-        st.session_state.requests.append(query)
-        st.session_state.responses.append(response)
+query = st.text_input("Ask a legal question (e.g., 'Chapter 5' or 'Article 22'):" if input_lang == "English" else "اطرح سؤالاً قانونياً (مثال: 'الفصل 5'): ")
 
-with response_container:
-    if st.session_state['responses']:
-        for i in range(len(st.session_state['responses'])):
-            message(st.session_state['responses'][i], key=str(i))
-            if i < len(st.session_state['requests']):
-                message(st.session_state["requests"][i], is_user=True, key=str(i) + '_user')
+if st.button("Get Answer"):
+    if selected_pdf and query:
+        # ✅ Translate query to English for processing
+        detected_lang = GoogleTranslator(source="auto", target="en").translate(query)
+        response = qa_chain.run(detected_lang)
+
+        # ✅ Translate response if needed
+        if response_lang == "Arabic":
+            response = GoogleTranslator(source="en", target="ar").translate(response)
+            st.markdown(f"<div dir='rtl' style='text-align: right; color: #444;'>{response}</div>", unsafe_allow_html=True)
+        else:
+            st.markdown(f"<div style='color: #444;'>{response}</div>", unsafe_allow_html=True)
+    else:
+        st.warning("⚠️ Please enter a legal question and upload a PDF.")
