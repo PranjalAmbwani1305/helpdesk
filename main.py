@@ -1,6 +1,6 @@
 import streamlit as st
 from streamlit_chat import message
-from langchain_huggingface import HuggingFaceHub
+from langchain.chat_models import ChatOpenAI
 from langchain.chains import RetrievalQA
 from langchain.vectorstores import Pinecone
 from langchain.embeddings import HuggingFaceEmbeddings
@@ -13,14 +13,19 @@ from utils import *
 # Load environment variables
 load_dotenv()
 
-# Hugging Face API Key
+# API Keys
 HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-PINECONE_ENV = os.getenv("PINECONE_ENV")  # Ensure correct Pinecone environment
+PINECONE_ENV = os.getenv("PINECONE_ENV")  # Ensure the correct Pinecone environment
 
 # Initialize Pinecone
 pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
-index_name = "helpdesk"  # Ensure you have created this Pinecone index
+index_name = "legal-helpdesk"
+
+# Ensure the index exists
+if index_name not in pinecone.list_indexes():
+    pinecone.create_index(name=index_name, dimension=768, metric="cosine")
+index = pinecone.Index(index_name)
 
 # Initialize Hugging Face Embeddings
 embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
@@ -31,16 +36,12 @@ vector_store = Pinecone.from_existing_index(index_name, embedding_model)
 # Retrieval-based QA using Pinecone
 retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 1})
 
-# Hugging Face Model
-llm = HuggingFaceHub(
-    repo_id="mistralai/Mistral-7B",
-    model_kwargs={"temperature": 0.5, "max_length": 512},
-    huggingfacehub_api_token=HUGGINGFACE_API_KEY
-)
+# Hugging Face Model for Answer Generation
+llm = ChatOpenAI(model_name="mistralai/Mistral-7B-Instruct-v0.1", openai_api_key=HUGGINGFACE_API_KEY)
 
-# Prompt Template (Ensures direct retrieval, not AI-generated answers)
+# Prompt Template for Better Formatting
 prompt_template = PromptTemplate(
-    template="Extract and return only the exact text for {query}. If not found, say 'Article not available'.",
+    template="Extract and return only the exact legal text for {query}. If not found, say 'No relevant article found'.",
     input_variables=["query"]
 )
 
@@ -52,10 +53,10 @@ qa_chain = RetrievalQA.from_chain_type(
 )
 
 # Streamlit UI
-st.subheader("⚖️ AI-Powered Legal Chatbot (Hugging Face + Pinecone)")
+st.markdown("<h1 style='text-align: center; color: #2E3B55;'>⚖️ AI-Powered Legal Chatbot</h1>", unsafe_allow_html=True)
 
 if 'responses' not in st.session_state:
-    st.session_state['responses'] = ["Hello! Enter the article number you want to retrieve."]
+    st.session_state['responses'] = ["Hello! Enter the chapter/article number to retrieve the exact text."]
 
 if 'requests' not in st.session_state:
     st.session_state['requests'] = []
@@ -65,9 +66,9 @@ response_container = st.container()
 textcontainer = st.container()
 
 with textcontainer:
-    query = st.text_input("Enter article number (e.g., Article 22):", key="input")
+    query = st.text_input("Enter chapter/article number (e.g., 'Chapter 5' or 'Article 22'):", key="input")
     if query:
-        with st.spinner("Retrieving..."):
+        with st.spinner("Retrieving legal text..."):
             response = qa_chain.run(query)
 
         # Store conversation in session state
