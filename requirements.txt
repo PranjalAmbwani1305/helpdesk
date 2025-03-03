@@ -1,9 +1,9 @@
 streamlit
-streamlit-chat
+pinecone-client
+sentence-transformers
+huggingface-hub
 langchain
 langchain-community
-huggingface-hub
-sentence-transformers
-pinecone-client
 python-dotenv
-pinecone
+deep-translator
+pypdf2
