@@ -2,7 +2,7 @@ import streamlit as st
 import pinecone
 import PyPDF2
 import os
-import requests
+import re
 from dotenv import load_dotenv
 from deep_translator import GoogleTranslator
 from sentence_transformers import SentenceTransformer
@@ -10,10 +10,8 @@ from sentence_transformers import SentenceTransformer
 # Load environment variables
 load_dotenv()
 
-# Hugging Face API Key (Store in Secrets or .env)
+# API Keys from .env file
 HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
-
-# Pinecone API Keys from .env file
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
 
@@ -21,46 +19,64 @@ PINECONE_ENV = os.getenv("PINECONE_ENV")
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
-# Check if index exists, if not create it
+# Create index if not exists
 if index_name not in pc.list_indexes().names():
     pc.create_index(name=index_name, dimension=768, metric="cosine")
 index = pc.Index(index_name)
 
-# Initialize Sentence Transformer for Embeddings
+# Load Sentence Transformer model for embeddings
 embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
-# Function to process PDFs into text chunks
-def process_pdf(pdf_path, chunk_size=500):
+# Function to extract structured articles from PDF
+def process_pdf(pdf_path):
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
-        text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
-    
-    chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
-    return chunks
+        text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
 
-# Store PDF content in Pinecone
-def store_vectors(chunks, pdf_name):
-    for i, chunk in enumerate(chunks):
-        vector = embedder.encode(chunk).tolist()
-        index.upsert([(f"{pdf_name}-doc-{i}", vector, {"pdf_name": pdf_name, "text": chunk})])
+    # Split text into articles using regex (assuming "Article X:" format)
+    articles = re.split(r'(Article \d+:)', text)
+    structured_data = {}
 
-# Query Pinecone for relevant legal information
+    for i in range(1, len(articles), 2):
+        article_title = articles[i].strip()
+        article_content = articles[i + 1].strip() if i + 1 < len(articles) else ""
+        structured_data[article_title] = article_content
+
+    return structured_data
+
+# Function to store extracted articles in Pinecone
+def store_vectors(structured_data, pdf_name):
+    for title, content in structured_data.items():
+        vector = embedder.encode(content).tolist()
+        index.upsert([(f"{pdf_name}-{title}", vector, {"pdf_name": pdf_name, "title": title, "text": content})])
+
+# Function to query Pinecone and retrieve the exact article
 def query_vectors(query, selected_pdf):
-    vector = embedder.encode(query).tolist()
-    results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
+    # Check if user is asking for a specific article
+    match = re.search(r'\bArticle (\d+)\b', query, re.IGNORECASE)
     
-    if results["matches"]:
-        matched_texts = [match["metadata"]["text"] for match in results["matches"]]
-        extracted_answer = "\n\n".join(matched_texts)
-        
-        # Extract the correct section by keyword matching
-        if "Chapter One: General Principles" in extracted_answer:
-            extracted_answer = extracted_answer.split("Chapter One: General Principles")[-1]
-            extracted_answer = "Chapter One: General Principles" + extracted_answer
-        
-        return f"**Extracted Answer from Document:**\n\n{extracted_answer}"
+    if match:
+        article_number = match.group(1)
+        article_key = f"Article {article_number}:"
+        results = index.query(
+            vector=embedder.encode(article_key).tolist(),
+            top_k=1,
+            include_metadata=True,
+            filter={"pdf_name": {"$eq": selected_pdf}, "title": {"$eq": article_key}}
+        )
     else:
-        return "No relevant information found in the selected document."
+        # Default semantic search for general questions
+        results = index.query(
+            vector=embedder.encode(query).tolist(),
+            top_k=5,
+            include_metadata=True,
+            filter={"pdf_name": {"$eq": selected_pdf}}
+        )
+
+    if results["matches"]:
+        return results["matches"][0]["metadata"]["text"]  # Return the exact article content
+    else:
+        return "No relevant information found."
 
 # Streamlit UI
 st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk for Saudi Arabia</h1>", unsafe_allow_html=True)
@@ -75,23 +91,27 @@ if pdf_source == "Upload from PC":
         with open(temp_pdf_path, "wb") as f:
             f.write(uploaded_file.read())
         
-        chunks = process_pdf(temp_pdf_path)
-        store_vectors(chunks, uploaded_file.name)
+        structured_data = process_pdf(temp_pdf_path)
+        store_vectors(structured_data, uploaded_file.name)
         st.success("PDF uploaded and processed!")
         selected_pdf = uploaded_file.name
 
+# Language selection
 input_lang = st.radio("Choose Input Language", ["English", "Arabic"], index=0)
 response_lang = st.radio("Choose Response Language", ["English", "Arabic"], index=0)
 
+# User query input
 query = st.text_input("Ask a question (in English or Arabic):" if input_lang == "English" else "اسأل سؤالاً (باللغة العربية أو الإنجليزية):")
 
 if st.button("Get Answer"):
     if selected_pdf and query:
+        # Translate query to English for processing
         detected_lang = GoogleTranslator(source="auto", target="en").translate(query)
         response = query_vectors(detected_lang, selected_pdf)
-        
+
+        # Translate response if needed
         if response_lang == "Arabic":
-            response = translate_text(response, "ar")
+            response = GoogleTranslator(source="en", target="ar").translate(response)
             st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
         else:
             st.write(f"**Answer:** {response}")
