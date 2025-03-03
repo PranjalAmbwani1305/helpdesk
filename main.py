@@ -1,6 +1,6 @@
 import streamlit as st
 from streamlit_chat import message
-from langchain.chat_models import HuggingFaceHub
+from langchain_huggingface import HuggingFaceHub
 from langchain.chains import RetrievalQA
 from langchain.vectorstores import Pinecone
 from langchain.embeddings import HuggingFaceEmbeddings
