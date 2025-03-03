@@ -54,9 +54,8 @@ def query_vectors(query, selected_pdf):
         combined_text = "\n\n".join(matched_texts)
         
         prompt = (
-            f"Here is relevant information from the legal document ({selected_pdf}):\n\n"
-            f"{combined_text}\n\n"
-            f"Now, based on this information, provide a well-structured response to the following legal question:\n"
+            f"Based on the legal document ({selected_pdf}), provide a well-structured and concise answer to the following legal question. "
+            f"Do not repeat unnecessary text or provide raw document excerpts. Instead, synthesize the information into a clear and meaningful response.\n\n"
             f"Question: {query}\n"
             f"Answer: "
         )
