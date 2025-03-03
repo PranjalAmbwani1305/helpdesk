@@ -27,7 +27,7 @@ index = pc.Index(index_name)  # ✅ Corrected Pinecone Index Access
 embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
 # ✅ Load Pinecone Vector Store
-vector_store = Pinecone.from_existing_index(index_name, embedding_model)
+vector_store = pc.from_existing_index(index_name, embedding_model)
 
 # ✅ Retrieval-based QA using Pinecone
 retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 3})
