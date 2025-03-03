@@ -8,7 +8,7 @@ from langchain.prompts import PromptTemplate
 import pinecone
 import os
 from dotenv import load_dotenv
-from utils import *
+from utils import get_conversation_string, query_refiner, find_match
 
 # Load environment variables
 load_dotenv()
