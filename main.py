@@ -47,15 +47,15 @@ def store_vectors(chunks, pdf_name):
 # Query Pinecone for relevant legal information
 def query_vectors(query, selected_pdf):
     vector = embedder.encode(query).tolist()
-    results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
+    results = index.query(vector=vector, top_k=10, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
     
     if results["matches"]:
         matched_texts = [match["metadata"]["text"] for match in results["matches"]]
         combined_text = "\n\n".join(matched_texts)
         
         prompt = (
-            f"Based on the legal document ({selected_pdf}), provide a well-structured and concise answer to the following legal question. "
-            f"Do not repeat unnecessary text or provide raw document excerpts. Instead, synthesize the information into a clear and meaningful response.\n\n"
+            f"You are an AI legal assistant. Extract only the exact and relevant answer from the following legal document ({selected_pdf}) without adding extra information.\n\n"
+            f"Relevant Text:\n{combined_text}\n\n"
             f"Question: {query}\n"
             f"Answer: "
         )
