@@ -47,40 +47,15 @@ def store_vectors(chunks, pdf_name):
 # Query Pinecone for relevant legal information
 def query_vectors(query, selected_pdf):
     vector = embedder.encode(query).tolist()
-    results = index.query(vector=vector, top_k=10, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
+    results = index.query(vector=vector, top_k=15, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
     
     if results["matches"]:
         matched_texts = [match["metadata"]["text"] for match in results["matches"]]
-        combined_text = "\n\n".join(matched_texts)
+        extracted_answer = "\n\n".join(matched_texts)
         
-        prompt = (
-            f"You are an AI legal assistant. Extract only the exact and relevant answer from the following legal document ({selected_pdf}) without adding extra information.\n\n"
-            f"Relevant Text:\n{combined_text}\n\n"
-            f"Question: {query}\n"
-            f"Answer: "
-        )
-        
-        return generate_text(prompt)
+        return f"**Extracted Answer from Document:**\n\n{extracted_answer}"
     else:
         return "No relevant information found in the selected document."
-
-# Generate response using Hugging Face API
-def generate_text(prompt):
-    url = "https://api-inference.huggingface.co/models/mistralai/Mixtral-8x7B-Instruct-v0.1"  # ✅ Updated Model
-    headers = {"Authorization": f"Bearer {HUGGINGFACE_API_KEY}"}
-    payload = {"inputs": prompt, "parameters": {"max_new_tokens": 500, "temperature": 0.7}}
-    
-    response = requests.post(url, headers=headers, json=payload)
-    
-    if response.status_code == 200:
-        return response.json()[0]["generated_text"]
-    else:
-        print(f"Error details: {response.status_code} - {response.text}")
-        return f"Error from Hugging Face API: {response.status_code} - {response.text}"
-
-# Translate text using Google Translator
-def translate_text(text, target_language):
-    return GoogleTranslator(source="auto", target=target_language).translate(text)
 
 # Streamlit UI
 st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk for Saudi Arabia</h1>", unsafe_allow_html=True)
