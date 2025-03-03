@@ -17,7 +17,7 @@ PINECONE_ENV = os.getenv("PINECONE_ENV")
 
 # Initialize Pinecone
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
-index_name = "helpdesk"
+index_name = "legal-helpdesk"
 
 # Create index if not exists
 if index_name not in pc.list_indexes().names():
@@ -27,42 +27,42 @@ index = pc.Index(index_name)
 # Load Sentence Transformer model for embeddings
 embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
-# Function to extract structured articles from PDF
+# Function to extract structured chapters from PDF
 def process_pdf(pdf_path):
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
         text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
 
-    # Split text into articles using regex (assuming "Article X:" format)
-    articles = re.split(r'(Article \d+:)', text)
+    # Split text into chapters using regex (assuming "Chapter X:" format)
+    chapters = re.split(r'(Chapter \d+:)', text)
     structured_data = {}
 
-    for i in range(1, len(articles), 2):
-        article_title = articles[i].strip()
-        article_content = articles[i + 1].strip() if i + 1 < len(articles) else ""
-        structured_data[article_title] = article_content
+    for i in range(1, len(chapters), 2):
+        chapter_title = chapters[i].strip()
+        chapter_content = chapters[i + 1].strip() if i + 1 < len(chapters) else ""
+        structured_data[chapter_title] = chapter_content
 
     return structured_data
 
-# Function to store extracted articles in Pinecone
+# Function to store extracted chapters in Pinecone
 def store_vectors(structured_data, pdf_name):
     for title, content in structured_data.items():
         vector = embedder.encode(content).tolist()
         index.upsert([(f"{pdf_name}-{title}", vector, {"pdf_name": pdf_name, "title": title, "text": content})])
 
-# Function to query Pinecone and retrieve the exact article
+# Function to query Pinecone and retrieve the exact chapter
 def query_vectors(query, selected_pdf):
-    # Check if user is asking for a specific article
-    match = re.search(r'\bArticle (\d+)\b', query, re.IGNORECASE)
+    # Check if user is asking for a specific chapter
+    match = re.search(r'\bChapter (\d+)\b', query, re.IGNORECASE)
     
     if match:
-        article_number = match.group(1)
-        article_key = f"Article {article_number}:"
+        chapter_number = match.group(1)
+        chapter_key = f"Chapter {chapter_number}:"
         results = index.query(
-            vector=embedder.encode(article_key).tolist(),
+            vector=embedder.encode(chapter_key).tolist(),
             top_k=1,
             include_metadata=True,
-            filter={"pdf_name": {"$eq": selected_pdf}, "title": {"$eq": article_key}}
+            filter={"pdf_name": {"$eq": selected_pdf}, "title": {"$eq": chapter_key}}
         )
     else:
         # Default semantic search for general questions
@@ -74,12 +74,12 @@ def query_vectors(query, selected_pdf):
         )
 
     if results["matches"]:
-        return results["matches"][0]["metadata"]["text"]  # Return the exact article content
+        return results["matches"][0]["metadata"]["text"]  # Return the exact chapter content
     else:
         return "No relevant information found."
 
 # Streamlit UI
-st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk for Saudi Arabia</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk</h1>", unsafe_allow_html=True)
 
 pdf_source = st.radio("Select PDF Source", ["Upload from PC"])
 selected_pdf = None
