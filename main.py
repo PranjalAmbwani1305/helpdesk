@@ -47,11 +47,15 @@ def store_vectors(chunks, pdf_name):
 # Query Pinecone for relevant legal information
 def query_vectors(query, selected_pdf):
     vector = embedder.encode(query).tolist()
-    results = index.query(vector=vector, top_k=15, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
+    results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
     
     if results["matches"]:
         matched_texts = [match["metadata"]["text"] for match in results["matches"]]
         extracted_answer = "\n\n".join(matched_texts)
+        
+        # Extract the most relevant section
+        extracted_answer = extracted_answer.split("Article ")[-1]  # Keeps only the most relevant article
+        extracted_answer = "Article " + extracted_answer  # Adds back "Article" heading
         
         return f"**Extracted Answer from Document:**\n\n{extracted_answer}"
     else:
