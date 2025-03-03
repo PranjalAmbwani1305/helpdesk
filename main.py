@@ -8,7 +8,7 @@ from langchain.vectorstores import Pinecone
 from langchain.chat_models import ChatOpenAI
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
-from pinecone import Pinecone  # ✅ Using the correct Pinecone import
+from pinecone import Pinecone  # ✅ Correct Pinecone Import
 
 # ✅ Load environment variables
 load_dotenv()
@@ -17,17 +17,21 @@ load_dotenv()
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 
-# ✅ Initialize Pinecone (Using Correct Method)
+# ✅ Initialize Pinecone (Correct Method)
 pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
-index = pc.Index(index_name)  # ✅ Corrected Pinecone Index Access
+# ✅ Ensure Pinecone Index Exists
+if index_name not in pc.list_indexes().names():
+    pc.create_index(name=index_name, dimension=1536, metric="cosine")
+
+index = pc.Index(index_name)  # ✅ Correct Pinecone Index Access
 
 # ✅ Initialize Hugging Face Embeddings
 embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-# ✅ Load Pinecone Vector Store
-vector_store = pc.from_existing_index(index_name, embedding_model)
+# ✅ Correct Pinecone Vector Store Usage
+vector_store = Pinecone(index, embedding_model)  # ✅ Fixed
 
 # ✅ Retrieval-based QA using Pinecone
 retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 3})
