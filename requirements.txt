@@ -2,7 +2,6 @@ streamlit
 streamlit-chat
 langchain
 langchain-community
-langchain-huggingface
 huggingface-hub
 sentence-transformers
 pinecone-client
