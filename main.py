@@ -11,7 +11,7 @@ PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
 PINECONE_ENV = st.secrets["PINECONE_ENV"]
 
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
-index_name = "helpdesk"
+index_name = "pdf-qna"
 
 if index_name not in pc.list_indexes().names():
     pc.create_index(
@@ -28,7 +28,7 @@ embedder = SentenceTransformer("all-MiniLM-L6-v2")
 # Smaller, optimized Hugging Face model
 generator = pipeline("text2text-generation", model="google/flan-t5-base")
 
-def process_pdf(pdf_path, chunk_size=1000):  # Increased chunk size
+def process_pdf(pdf_path, chunk_size=500):  # Reduced chunk size to avoid exceeding token limits
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
         text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
@@ -46,7 +46,7 @@ def query_vectors(query, selected_pdf):
     
     if results and "matches" in results and results["matches"]:
         matched_texts = [match["metadata"]["text"] for match in results["matches"]]
-        combined_text = "\n\n".join(matched_texts)
+        combined_text = "\n\n".join(matched_texts)[:512]  # Ensure text does not exceed 512 tokens
         
         prompt = (
             f"You are an AI legal assistant. Based on the following extracted text from the document '{selected_pdf}', provide an accurate and well-formatted response with complete sentences and proper structure.\n\n"
@@ -55,7 +55,7 @@ def query_vectors(query, selected_pdf):
         )
         
         try:
-            response = generator(prompt, max_length=300)[0]["generated_text"].strip()
+            response = generator(prompt, max_length=512, truncation=True)[0]["generated_text"].strip()
         except Exception as e:
             response = f"Error generating response: {str(e)}"
 
