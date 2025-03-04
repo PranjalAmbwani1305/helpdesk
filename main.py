@@ -1,5 +1,5 @@
 import streamlit as st
-import pinecone
+from pinecone import Pinecone
 import PyPDF2
 import os
 import re
@@ -11,22 +11,14 @@ from sentence_transformers import SentenceTransformer
 PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
 PINECONE_ENV = st.secrets.get("PINECONE_ENV", "us-west1-gcp")  # Default to us-west1-gcp
 
-# Initialize Pinecone
-pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
+# Initialize Pinecone using the updated method
+pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
-# Ensure Index Exists Before Querying
-if index_name not in pinecone.list_indexes():
-    print("⚠️ Index does not exist. Creating index...")
-    pinecone.create_index(index_name, dimension=768, metric="cosine")
-
-# Wait for index to be ready before querying
-time.sleep(5)  # Wait 5 seconds for the index to be ready
-
-index = pinecone.Index(index_name)
+index = pc.Index(index_name)
 print("✅ Pinecone Index Ready:", index.describe_index_stats())
 
-# Load Sentence Transformer model for embeddings
+# Load Sentence Transformer model for embeddings (Ensure model supports 1536 dimensions)
 embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
 # Function to extract structured chapters from PDF
@@ -63,7 +55,7 @@ def debug_pinecone_storage():
     print(index.describe_index_stats())
 
     try:
-        stored_data = index.query(vector=[0]*768, top_k=5, include_metadata=True)
+        stored_data = index.query(vector=[0]*1536, top_k=5, include_metadata=True)
         print("📌 Sample stored data:", stored_data)
     except Exception as e:
         print("⚠️ Pinecone Storage Check Failed:", str(e))
@@ -72,8 +64,8 @@ def debug_pinecone_storage():
 def query_vectors(query, selected_pdf):
     vector = embedder.encode(query).tolist()
 
-    if len(vector) != 768:  # Adjust if using a different model
-        raise ValueError(f"⚠️ Query vector has incorrect dimensions! Expected 768, got {len(vector)}")
+    if len(vector) != 1536:  # Adjusted for the correct dimension
+        raise ValueError(f"⚠️ Query vector has incorrect dimensions! Expected 1536, got {len(vector)}")
 
     print(f"🔍 Querying Pinecone for: {query}")
     print(f"📌 Using vector of length: {len(vector)}")
