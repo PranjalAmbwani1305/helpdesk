@@ -28,10 +28,10 @@ embedder = SentenceTransformer("all-MiniLM-L6-v2")
 # Smaller, optimized Hugging Face model
 generator = pipeline("text2text-generation", model="google/flan-t5-base")
 
-def process_pdf(pdf_path, chunk_size=500):
+def process_pdf(pdf_path, chunk_size=1000):  # Increased chunk size
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
-        text = " ".join([page.extract_text() for page in reader.pages if page.extract_text()])
+        text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
     chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
     return chunks
 
@@ -49,13 +49,13 @@ def query_vectors(query, selected_pdf):
         combined_text = "\n\n".join(matched_texts)
         
         prompt = (
-            f"You are an AI legal assistant. Based on the following extracted text from the document '{selected_pdf}', provide an accurate and concise response.\n\n"
+            f"You are an AI legal assistant. Based on the following extracted text from the document '{selected_pdf}', provide an accurate and well-formatted response with complete sentences and proper structure.\n\n"
             f"Document Excerpts:\n{combined_text}\n\n"
             f"User's Question: {query}\n\nAnswer: "
         )
         
         try:
-            response = generator(prompt, max_length=200)[0]["generated_text"]
+            response = generator(prompt, max_length=300)[0]["generated_text"].strip()
         except Exception as e:
             response = f"Error generating response: {str(e)}"
 
@@ -92,8 +92,8 @@ if st.button("Get Answer"):
         
         if response_lang == "Arabic":
             response = translate_text(response, "ar")
-            st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div dir='rtl' style='text-align: right; white-space: pre-wrap;'>{response}</div>", unsafe_allow_html=True)
         else:
-            st.write(f"**Answer:** {response}")
+            st.markdown(f"<p style='white-space: pre-wrap;'>{response}</p>", unsafe_allow_html=True)
     else:
         st.warning("Please enter a query and upload a PDF.")
