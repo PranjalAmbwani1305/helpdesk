@@ -1,34 +1,29 @@
 import streamlit as st
-from pinecone import Pinecone
+import pinecone
 import PyPDF2
 import os
 import re
 import time
-from dotenv import load_dotenv
 from deep_translator import GoogleTranslator
 from sentence_transformers import SentenceTransformer
 
-# Load environment variables
-load_dotenv()
-
-# API Keys from .env file
-HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-PINECONE_ENV = os.getenv("PINECONE_ENV")
+# Read API Key from Streamlit Secrets
+PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
+PINECONE_ENV = st.secrets.get("PINECONE_ENV", "us-west1-gcp")  # Default to us-west1-gcp
 
 # Initialize Pinecone
-pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
+pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
 index_name = "helpdesk"
 
 # Ensure Index Exists Before Querying
-if index_name not in pc.list_indexes().names():
+if index_name not in pinecone.list_indexes():
     print("⚠️ Index does not exist. Creating index...")
-    pc.create_index(name=index_name, dimension=348, metric="cosine")
+    pinecone.create_index(index_name, dimension=768, metric="cosine")
 
 # Wait for index to be ready before querying
 time.sleep(5)  # Wait 5 seconds for the index to be ready
 
-index = pc.Index(index_name)
+index = pinecone.Index(index_name)
 print("✅ Pinecone Index Ready:", index.describe_index_stats())
 
 # Load Sentence Transformer model for embeddings
