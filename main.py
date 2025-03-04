@@ -14,7 +14,7 @@ PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
 
 pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
-index_name = "pdf-qna"
+index_name = "helpdesk"
 
 # Check if index exists
 if index_name not in pinecone.list_indexes():
