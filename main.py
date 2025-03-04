@@ -2,25 +2,24 @@ import streamlit as st
 import pinecone
 import PyPDF2
 import os
-from dotenv import load_dotenv
 from deep_translator import GoogleTranslator  
 from sentence_transformers import SentenceTransformer
 from transformers import pipeline
 
-load_dotenv()
-
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-PINECONE_ENV = os.getenv("PINECONE_ENV")
+# Load secrets from Streamlit
+PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
+PINECONE_ENV = st.secrets["PINECONE_ENV"]
 
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
+
 index = pc.Index(index_name)
 
 # Embedding model
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
 
 # Hugging Face model for text generation
-generator = pipeline("text-generation", model="tiiuae/falcon-7b-instruct")
+generator = pipeline("text-generation", model="mistralai/Mistral-7B-Instruct-v0.1")
 
 def process_pdf(pdf_path, chunk_size=500):
     with open(pdf_path, "rb") as file:
