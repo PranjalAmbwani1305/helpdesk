@@ -3,6 +3,7 @@ import pinecone
 import PyPDF2
 import os
 import re
+import time
 from dotenv import load_dotenv
 from deep_translator import GoogleTranslator
 from sentence_transformers import SentenceTransformer
@@ -19,11 +20,16 @@ PINECONE_ENV = os.getenv("PINECONE_ENV")
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
-# Ensure Index Exists
+# Ensure Index Exists Before Querying
 if index_name not in pc.list_indexes().names():
-    print("📌 Creating Pinecone Index...")
+    print("⚠️ Index does not exist. Creating index...")
     pc.create_index(name=index_name, dimension=768, metric="cosine")
+
+# Wait for index to be ready before querying
+time.sleep(5)  # Wait 5 seconds for the index to be ready
+
 index = pc.Index(index_name)
+print("✅ Pinecone Index Ready:", index.describe_index_stats())
 
 # Load Sentence Transformer model for embeddings
 embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
@@ -61,32 +67,41 @@ def debug_pinecone_storage():
     print("📌 Checking Pinecone index stats:")
     print(index.describe_index_stats())
 
-    stored_data = index.query(vector=[0]*768, top_k=5, include_metadata=True)
-    print("📌 Sample stored data:", stored_data)
+    try:
+        stored_data = index.query(vector=[0]*768, top_k=5, include_metadata=True)
+        print("📌 Sample stored data:", stored_data)
+    except Exception as e:
+        print("⚠️ Pinecone Storage Check Failed:", str(e))
 
 # Function to query Pinecone and retrieve the exact chapter
 def query_vectors(query, selected_pdf):
     vector = embedder.encode(query).tolist()
-    
-    # Debugging
+
+    if len(vector) != 768:  # Adjust if using a different model
+        raise ValueError(f"⚠️ Query vector has incorrect dimensions! Expected 768, got {len(vector)}")
+
     print(f"🔍 Querying Pinecone for: {query}")
     print(f"📌 Using vector of length: {len(vector)}")
-    
-    results = index.query(
-        vector=vector, 
-        top_k=5, 
-        include_metadata=True, 
-        filter={"pdf_name": selected_pdf}
-    )
 
-    print("📌 Pinecone Query Results:", results)  # Debugging
+    try:
+        results = index.query(
+            vector=vector, 
+            top_k=5, 
+            include_metadata=True, 
+            filter={"pdf_name": selected_pdf}
+        )
 
-    if not results["matches"]:
-        return "⚠️ No relevant information found in the selected document."
+        print("📌 Pinecone Query Results:", results)  # Debugging
 
-    matched_texts = [match["metadata"]["text"] for match in results["matches"]]
-    
-    return "\n\n".join(matched_texts)
+        if not results["matches"]:
+            return "⚠️ No relevant information found in the selected document."
+
+        matched_texts = [match["metadata"]["text"] for match in results["matches"]]
+        return "\n\n".join(matched_texts)
+
+    except Exception as e:
+        print("⚠️ Pinecone Query Failed:", str(e))
+        return "⚠️ Error occurred while querying Pinecone."
 
 # Streamlit UI
 st.markdown("<h1 style='text-align: center;'>📜 AI-Powered Legal HelpDesk</h1>", unsafe_allow_html=True)
