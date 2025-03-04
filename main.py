@@ -2,91 +2,139 @@ import streamlit as st
 import pinecone
 import PyPDF2
 import os
-from deep_translator import GoogleTranslator  
+import re
+import time
+from deep_translator import GoogleTranslator
 from sentence_transformers import SentenceTransformer
-from transformers import pipeline
 
-# Load secrets from Streamlit
+# Read API Key from Streamlit Secrets
 PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
-PINECONE_ENV = st.secrets["PINECONE_ENV"]
+PINECONE_ENV = st.secrets.get("PINECONE_ENV", "us-east-1")  # Default to us-west1-gcp
 
+# Initialize Pinecone
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
 index = pc.Index(index_name)
+print("✅ Pinecone Index Ready:", index.describe_index_stats())
 
-# Embedding model
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
+# Load Sentence Transformer model for embeddings
+embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
-# Smaller, optimized Hugging Face model
-generator = pipeline("text2text-generation", model="google/flan-t5-base")
-
-def process_pdf(pdf_path, chunk_size=500):  # Reduced chunk size to avoid exceeding token limits
+# Function to extract structured chapters from PDF
+def process_pdf(pdf_path):
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
         text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
-    chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
-    return chunks
 
-def store_vectors(chunks, pdf_name):
-    for i, chunk in enumerate(chunks):
-        vector = embedder.encode(chunk).tolist()
-        index.upsert([(f"{pdf_name}-doc-{i}", vector, {"pdf_name": pdf_name, "text": chunk})])
+    print("📌 Extracted PDF Text (Preview):", text[:500])  # Show first 500 characters
 
+    # Improved Regex: Supports "CHAPTER X", "ARTICLE X", and other legal formats
+    chapters = re.split(r'(CHAPTER\s+\d+|ARTICLE\s+\d+)', text, flags=re.IGNORECASE)
+    structured_data = {}
+
+    for i in range(1, len(chapters), 2):
+        chapter_title = chapters[i].strip()
+        chapter_content = chapters[i + 1].strip() if i + 1 < len(chapters) else ""
+        
+        print(f"📌 Extracted: {chapter_title} -> {len(chapter_content)} characters")  # Debugging
+
+        structured_data[chapter_title] = chapter_content
+
+    return structured_data
+
+# Function to store extracted chapters in Pinecone
+def store_vectors(structured_data, pdf_name):
+    for title, content in structured_data.items():
+        vector = embedder.encode(content).tolist()
+
+        metadata = {
+            "pdf_name": pdf_name,
+            "chapter": title,  
+            "text": content
+        }
+
+        print(f"📌 Storing: {title} in Pinecone with {len(vector)} dimensions")
+        index.upsert([(f"{pdf_name}-{title}", vector, metadata)])
+
+# Function to check if Pinecone is storing data properly
+def debug_pinecone_storage():
+    print("📌 Checking Pinecone stored data...")
+    stored_data = index.query(vector=[0]*1536, top_k=5, include_metadata=True)
+    print("📌 Sample stored data:", stored_data)
+
+# Function to query Pinecone and retrieve the exact chapter
 def query_vectors(query, selected_pdf):
+    match = re.search(r'(CHAPTER|ARTICLE)\s+(\d+)', query, re.IGNORECASE)
+    requested_section = f"{match.group(1).upper()} {match.group(2)}" if match else None
+
+    print(f"🔍 Requested Section: {requested_section}")  # Debugging
+
     vector = embedder.encode(query).tolist()
-    results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
     
-    if results and "matches" in results and results["matches"]:
-        matched_texts = [match["metadata"]["text"] for match in results["matches"]]
-        combined_text = "\n\n".join(matched_texts)[:512]  # Ensure text does not exceed 512 tokens
-        
-        prompt = (
-            f"You are an AI legal assistant. Based on the following extracted text from the document '{selected_pdf}', provide an accurate and well-formatted response with complete sentences and proper structure.\n\n"
-            f"Document Excerpts:\n{combined_text}\n\n"
-            f"User's Question: {query}\n\nAnswer: "
-        )
-        
-        try:
-            response = generator(prompt, max_length=512, truncation=True)[0]["generated_text"].strip()
-        except Exception as e:
-            response = f"Error generating response: {str(e)}"
+    results = index.query(
+        vector=vector, 
+        top_k=5, 
+        include_metadata=True, 
+        filter={"pdf_name": selected_pdf}
+    )
 
-        return response
-    else:
-        return "No relevant information found."
+    print("📌 Pinecone Query Results:", results)
 
-def translate_text(text, target_language):
-    return GoogleTranslator(source="auto", target=target_language).translate(text)
+    if not results["matches"]:
+        return "⚠️ No relevant information found in the selected document."
 
-st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk</h1>", unsafe_allow_html=True)
+    for match in results["matches"]:
+        stored_chapter = match["metadata"].get("chapter", "")
+        stored_text = match["metadata"].get("text", "")
 
-pdf_source = st.radio("Select PDF Source", ["Upload from PC"])
-if pdf_source == "Upload from PC":
-    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
-    if uploaded_file:
-        temp_pdf_path = f"temp_{uploaded_file.name}"
-        with open(temp_pdf_path, "wb") as f:
-            f.write(uploaded_file.read())
-        chunks = process_pdf(temp_pdf_path)
-        store_vectors(chunks, uploaded_file.name)
-        st.success("PDF uploaded and processed!")
-        selected_pdf = uploaded_file.name
+        print(f"📌 Found stored chapter: {stored_chapter}")  # Debugging
+        print(f"📌 Stored text preview: {stored_text[:200]}")  # Show first 200 characters
 
-input_lang = st.radio("Choose Input Language", ["English", "Arabic"], index=0)
-response_lang = st.radio("Choose Response Language", ["English", "Arabic"], index=0)
+        if requested_section and requested_section in stored_chapter:
+            return f"**Extracted Answer from {requested_section}:**\n\n{stored_text}"
 
-query = st.text_input("Ask a question:")
+    return "⚠️ Requested section not found in the document."
 
-if st.button("Get Answer"):
-    if uploaded_file and query:
+# Streamlit UI
+st.markdown("<h1 style='text-align: center;'>📜 AI-Powered Legal HelpDesk</h1>", unsafe_allow_html=True)
+
+# File Uploading Section
+uploaded_file = st.file_uploader("📂 Upload a PDF", type=["pdf"])
+if uploaded_file:
+    temp_pdf_path = f"temp_{uploaded_file.name}"
+    with open(temp_pdf_path, "wb") as f:
+        f.write(uploaded_file.read())
+    
+    structured_data = process_pdf(temp_pdf_path)
+    store_vectors(structured_data, uploaded_file.name)
+    st.success("✅ PDF uploaded and processed!")
+
+    # Debugging: Check what was stored
+    debug_pinecone_storage()
+
+# Select from Uploaded PDFs
+pdf_list = [uploaded_file.name] if uploaded_file else []
+selected_pdf = st.selectbox("📖 Select PDF for Query", pdf_list) if pdf_list else None
+
+# Language selection
+input_lang = st.radio("🌍 Choose Input Language", ["English", "Arabic"], index=0)
+response_lang = st.radio("🌍 Choose Response Language", ["English", "Arabic"], index=0)
+
+# User query input
+query = st.text_input("🔎 Ask a question (e.g., 'Chapter 5'):" if input_lang == "English" else "📝 اسأل سؤالاً (مثل 'الفصل 5'): ")
+
+if st.button("🔍 Get Answer"):
+    if selected_pdf and query:
+        # Translate query to English for processing
         detected_lang = GoogleTranslator(source="auto", target="en").translate(query)
-        response = query_vectors(detected_lang, uploaded_file.name)
-        
+        response = query_vectors(detected_lang, selected_pdf)
+
+        # Translate response if needed
         if response_lang == "Arabic":
-            response = translate_text(response, "ar")
-            st.markdown(f"<div dir='rtl' style='text-align: right; white-space: pre-wrap;'>{response}</div>", unsafe_allow_html=True)
+            response = GoogleTranslator(source="en", target="ar").translate(response)
+            st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
         else:
-            st.markdown(f"<p style='white-space: pre-wrap;'>{response}</p>", unsafe_allow_html=True)
+            st.markdown(f"<div style='white-space: pre-wrap; font-family: Arial;'>{response}</div>", unsafe_allow_html=True)
     else:
-        st.warning("Please enter a query and upload a PDF.")
+        st.warning("⚠️ Please enter a query and select a PDF.")
