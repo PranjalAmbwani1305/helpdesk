@@ -1,134 +1,87 @@
 import streamlit as st
-from pinecone import Pinecone
-import PyPDF2
+import pinecone
 import os
-import re
-import time
-from deep_translator import GoogleTranslator
-from sentence_transformers import SentenceTransformer
+from dotenv import load_dotenv
+from deep_translator import GoogleTranslator  
+from transformers import pipeline, AutoTokenizer, AutoModel
+import torch
+import PyPDF2
 
-# Read API Key from Streamlit Secrets
-PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
-PINECONE_ENV = st.secrets.get("PINECONE_ENV", "us-west1-gcp")  # Default to us-west1-gcp
+load_dotenv()
 
-# Initialize Pinecone using the updated method
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+PINECONE_ENV = os.getenv("PINECONE_ENV")
+
+from pinecone import Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
-
 index = pc.Index(index_name)
-print("✅ Pinecone Index Ready:", index.describe_index_stats())
 
-# Load Sentence Transformer model for embeddings (Ensure model supports 1536 dimensions)
-embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+hf_model = "sentence-transformers/all-MiniLM-L6-v2"
+tokenizer = AutoTokenizer.from_pretrained(hf_model)
+model = AutoModel.from_pretrained(hf_model)
 
-# Function to extract structured chapters from PDF
-def process_pdf(pdf_path):
+qa_pipeline = pipeline("text-generation", model="mistralai/Mistral-7B-Instruct-v0.1")
+
+def get_embedding(text):
+    tokens = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
+    with torch.no_grad():
+        embeddings = model(**tokens).last_hidden_state.mean(dim=1)
+    return embeddings.squeeze().tolist()
+
+def process_pdf(pdf_path, chunk_size=500):
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
-        text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+        text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
+    
+    chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+    return chunks
 
-    # Improved Regex: Supports "CHAPTER X", "ARTICLE X", and other legal formats
-    chapters = re.split(r'(CHAPTER\s+\d+|ARTICLE\s+\d+)', text, flags=re.IGNORECASE)
-    structured_data = {}
+def store_vectors(chunks, pdf_name):
+    for i, chunk in enumerate(chunks):
+        vector = get_embedding(chunk)
+        index.upsert([(f"{pdf_name}-doc-{i}", vector, {"pdf_name": pdf_name, "text": chunk})])
 
-    for i in range(1, len(chapters), 2):
-        chapter_title = chapters[i].strip()
-        chapter_content = chapters[i + 1].strip() if i + 1 < len(chapters) else ""
-        structured_data[chapter_title] = chapter_content
-
-    return structured_data
-
-# Function to store extracted chapters in Pinecone
-def store_vectors(structured_data, pdf_name):
-    for title, content in structured_data.items():
-        vector = embedder.encode(content).tolist()
-        
-        # Ensure correct metadata storage
-        metadata = {"pdf_name": pdf_name, "chapter": title, "text": content}
-        
-        print(f"📌 Storing: {title} in Pinecone with {len(vector)} dimensions")
-        index.upsert([(f"{pdf_name}-{title}", vector, metadata)])
-
-# Function to check if Pinecone is storing data properly
-def debug_pinecone_storage():
-    print("📌 Checking Pinecone index stats:")
-    print(index.describe_index_stats())
-
-    try:
-        stored_data = index.query(vector=[0]*1536, top_k=5, include_metadata=True)
-        print("📌 Sample stored data:", stored_data)
-    except Exception as e:
-        print("⚠️ Pinecone Storage Check Failed:", str(e))
-
-# Function to query Pinecone and retrieve the exact chapter
 def query_vectors(query, selected_pdf):
-    vector = embedder.encode(query).tolist()
+    vector = get_embedding(query)
+    results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
 
-    if len(vector) != 1536:  # Adjusted for the correct dimension
-        raise ValueError(f"⚠️ Query vector has incorrect dimensions! Expected 1536, got {len(vector)}")
-
-    print(f"🔍 Querying Pinecone for: {query}")
-    print(f"📌 Using vector of length: {len(vector)}")
-
-    try:
-        results = index.query(
-            vector=vector, 
-            top_k=5, 
-            include_metadata=True, 
-            filter={"pdf_name": selected_pdf}
-        )
-
-        print("📌 Pinecone Query Results:", results)  # Debugging
-
-        if not results["matches"]:
-            return "⚠️ No relevant information found in the selected document."
-
+    if results["matches"]:
         matched_texts = [match["metadata"]["text"] for match in results["matches"]]
-        return "\n\n".join(matched_texts)
+        combined_text = "\n\n".join(matched_texts)
 
-    except Exception as e:
-        print("⚠️ Pinecone Query Failed:", str(e))
-        return "⚠️ Error occurred while querying Pinecone."
+        prompt = f"{combined_text}\n\nAnswer the question: {query}"
+        response = qa_pipeline(prompt, max_length=300)[0]['generated_text']
+        return response
+    else:
+        return "No relevant information found in the selected document."
 
-# Streamlit UI
-st.markdown("<h1 style='text-align: center;'>📜 AI-Powered Legal HelpDesk</h1>", unsafe_allow_html=True)
+def translate_text(text, target_language):
+    return GoogleTranslator(source="auto", target=target_language).translate(text)
 
-# File Uploading Section
-uploaded_file = st.file_uploader("📂 Upload a PDF", type=["pdf"])
+st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk for Saudi Arabia</h1>", unsafe_allow_html=True)
+
+uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
 if uploaded_file:
     temp_pdf_path = f"temp_{uploaded_file.name}"
     with open(temp_pdf_path, "wb") as f:
         f.write(uploaded_file.read())
     
-    structured_data = process_pdf(temp_pdf_path)
-    store_vectors(structured_data, uploaded_file.name)
-    st.success("✅ PDF uploaded and processed!")
+    chunks = process_pdf(temp_pdf_path)
+    store_vectors(chunks, uploaded_file.name)
+    st.success("PDF uploaded and processed!")
 
-    # Debugging: Check what was stored
-    debug_pinecone_storage()
+query = st.text_input("Ask a question (in English or Arabic):")
+response_lang = st.radio("Choose Response Language", ["English", "Arabic"], index=0)
 
-# Select from Uploaded PDFs
-pdf_list = [uploaded_file.name] if uploaded_file else []
-selected_pdf = st.selectbox("📖 Select PDF for Query", pdf_list) if pdf_list else None
-
-# Language selection
-input_lang = st.radio("🌍 Choose Input Language", ["English", "Arabic"], index=0)
-response_lang = st.radio("🌍 Choose Response Language", ["English", "Arabic"], index=0)
-
-# User query input
-query = st.text_input("🔎 Ask a question (e.g., 'Chapter 5'):" if input_lang == "English" else "📝 اسأل سؤالاً (مثل 'الفصل 5'): ")
-
-if st.button("🔍 Get Answer"):
-    if selected_pdf and query:
-        # Translate query to English for processing
+if st.button("Get Answer"):
+    if uploaded_file and query:
         detected_lang = GoogleTranslator(source="auto", target="en").translate(query)
-        response = query_vectors(detected_lang, selected_pdf)
-
-        # Translate response if needed
+        response = query_vectors(detected_lang, uploaded_file.name)
         if response_lang == "Arabic":
-            response = GoogleTranslator(source="en", target="ar").translate(response)
+            response = translate_text(response, "ar")
             st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
         else:
-            st.markdown(f"<div style='white-space: pre-wrap; font-family: Arial;'>{response}</div>", unsafe_allow_html=True)
+            st.write(f"**Answer:** {response}")
     else:
-        st.warning("⚠️ Please enter a query and select a PDF.")
+        st.warning("Please enter a query and upload a PDF.")
