@@ -9,11 +9,23 @@ from sentence_transformers import SentenceTransformer
 
 # Read API Key from Streamlit Secrets
 PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
-PINECONE_ENV = st.secrets.get("PINECONE_ENV", "us-east-1")  # Default to us-west1-gcp
+PINECONE_ENV = st.secrets.get("PINECONE_ENV", "us-east-1")  # Default to us-east-1
 
-# Initialize Pinecone
+# Initialize Pinecone (Using Your Preferred Method)
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
+
+# Ensure the index exists
+if index_name not in pc.list_indexes().names():
+    print("⚠️ Index does not exist. Creating index...")
+    pc.create_index(
+        name=index_name,
+        dimension=1536,  
+        metric="cosine"
+    )
+
+# Wait for index to be ready
+time.sleep(10)
 
 index = pc.Index(index_name)
 print("✅ Pinecone Index Ready:", index.describe_index_stats())
@@ -60,8 +72,24 @@ def store_vectors(structured_data, pdf_name):
 # Function to check if Pinecone is storing data properly
 def debug_pinecone_storage():
     print("📌 Checking Pinecone stored data...")
-    stored_data = index.query(vector=[0]*1536, top_k=5, include_metadata=True)
-    print("📌 Sample stored data:", stored_data)
+    
+    try:
+        index_stats = index.describe_index_stats()
+        print("📌 Index Stats:", index_stats)
+
+        if index_stats["total_vector_count"] == 0:
+            print("⚠️ No data found in the index. Ensure data is stored first.")
+            return
+
+        results = index.query(
+            vector=embedder.encode("test query").tolist(),  # Use a real vector
+            top_k=5,
+            include_metadata=True
+        )
+
+        print("📌 Sample stored data:", results)
+    except Exception as e:
+        print("⚠️ Pinecone Query Failed:", str(e))
 
 # Function to query Pinecone and retrieve the exact chapter
 def query_vectors(query, selected_pdf):
