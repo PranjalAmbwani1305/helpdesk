@@ -19,7 +19,11 @@ PINECONE_ENV = os.getenv("PINECONE_ENV")
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
+# Ensure Index Exists
+if index_name not in pc.list_indexes().names():
+    pc.create_index(name=index_name, dimension=768, metric="cosine")
 index = pc.Index(index_name)
+
 # Load Sentence Transformer model for embeddings
 embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
@@ -29,8 +33,8 @@ def process_pdf(pdf_path):
         reader = PyPDF2.PdfReader(file)
         text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
 
-    # Split text into chapters using regex (assuming "Chapter X:" format)
-    chapters = re.split(r'(Chapter \d+:)', text)
+    # Improved Regex: Supports "CHAPTER X", "ARTICLE X", and other legal formats
+    chapters = re.split(r'(CHAPTER\s+\d+|ARTICLE\s+\d+)', text, flags=re.IGNORECASE)
     structured_data = {}
 
     for i in range(1, len(chapters), 2):
@@ -44,35 +48,39 @@ def process_pdf(pdf_path):
 def store_vectors(structured_data, pdf_name):
     for title, content in structured_data.items():
         vector = embedder.encode(content).tolist()
-        index.upsert([(f"{pdf_name}-{title}", vector, {"pdf_name": pdf_name, "title": title, "text": content})])
+        
+        # Debugging: Ensure the data is being stored correctly
+        print(f"Storing: {title} -> {len(vector)} dimensions")
+        
+        index.upsert([(f"{pdf_name}-{title}", vector, {"pdf_name": pdf_name, "chapter": title, "text": content})])
 
 # Function to query Pinecone and retrieve the exact chapter
 def query_vectors(query, selected_pdf):
-    # Check if user is asking for a specific chapter
-    match = re.search(r'\bChapter (\d+)\b', query, re.IGNORECASE)
+    # Extract requested chapter/article number
+    match = re.search(r'(CHAPTER|ARTICLE)\s+(\d+)', query, re.IGNORECASE)
+    requested_section = f"{match.group(1).upper()} {match.group(2)}" if match else None
     
-    if match:
-        chapter_number = match.group(1)
-        chapter_key = f"Chapter {chapter_number}:"
-        results = index.query(
-            vector=embedder.encode(chapter_key).tolist(),
-            top_k=1,
-            include_metadata=True,
-            filter={"pdf_name": {"$eq": selected_pdf}, "title": {"$eq": chapter_key}}
-        )
-    else:
-        # Default semantic search for general questions
-        results = index.query(
-            vector=embedder.encode(query).tolist(),
-            top_k=5,
-            include_metadata=True,
-            filter={"pdf_name": {"$eq": selected_pdf}}
-        )
+    print(f"🔍 Querying for: {requested_section}")  # Debugging
 
-    if results["matches"]:
-        return results["matches"][0]["metadata"]["text"]  # Return the exact chapter content
-    else:
-        return "No relevant information found."
+    # Query Pinecone
+    results = index.query(
+        vector=embedder.encode(query).tolist(),
+        top_k=5,
+        include_metadata=True,
+        filter={"pdf_name": selected_pdf}
+    )
+
+    print("🔹 Pinecone Results:", results)  # Debugging
+
+    if not results["matches"]:
+        return "⚠️ No relevant information found in the selected document."
+
+    # Retrieve only the requested chapter
+    for match in results["matches"]:
+        if requested_section and requested_section in match["metadata"].get("chapter", ""):
+            return f"**Extracted Answer from {requested_section}:**\n\n{match['metadata']['text']}"
+
+    return "⚠️ Requested section not found in the document."
 
 # Streamlit UI
 st.markdown("<h1 style='text-align: center;'>📜 AI-Powered Legal HelpDesk</h1>", unsafe_allow_html=True)
