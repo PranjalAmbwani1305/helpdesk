@@ -23,7 +23,7 @@ index_name = "helpdesk"
 # Ensure Index Exists Before Querying
 if index_name not in pc.list_indexes().names():
     print("⚠️ Index does not exist. Creating index...")
-    pc.create_index(name=index_name, dimension=768, metric="cosine")
+    pc.create_index(name=index_name, dimension=348, metric="cosine")
 
 # Wait for index to be ready before querying
 time.sleep(5)  # Wait 5 seconds for the index to be ready
