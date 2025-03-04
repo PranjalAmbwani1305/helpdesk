@@ -11,14 +11,7 @@ PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
 PINECONE_ENV = st.secrets["PINECONE_ENV"]
 
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
-index_name = "pdf-qna"
-
-if index_name not in pc.list_indexes().names():
-    pc.create_index(
-        name=index_name,
-        dimension=384,  # Adjusted for SentenceTransformer
-        metric="cosine"
-    )
+index_name = "helpdesk"
 
 index = pc.Index(index_name)
 
