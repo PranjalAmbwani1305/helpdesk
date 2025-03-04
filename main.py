@@ -21,7 +21,8 @@ hf_model = "sentence-transformers/all-MiniLM-L6-v2"
 tokenizer = AutoTokenizer.from_pretrained(hf_model)
 model = AutoModel.from_pretrained(hf_model)
 
-qa_pipeline = pipeline("text-generation", model="mistralai/Mistral-7B-Instruct-v0.1")
+qa_pipeline = pipeline("text-generation", model="tiiuae/falcon-7b-instruct")
+
 
 def get_embedding(text):
     tokens = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
