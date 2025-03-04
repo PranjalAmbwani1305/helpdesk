@@ -13,13 +13,20 @@ PINECONE_ENV = st.secrets["PINECONE_ENV"]
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
+if index_name not in pc.list_indexes().names():
+    pc.create_index(
+        name=index_name,
+        dimension=384,  # Adjusted for SentenceTransformer
+        metric="cosine"
+    )
+
 index = pc.Index(index_name)
 
 # Embedding model
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Hugging Face model for text generation
-generator = pipeline("text-generation", model="mistralai/Mistral-7B-Instruct-v0.1")
+# Smaller, optimized Hugging Face model
+generator = pipeline("text2text-generation", model="google/flan-t5-base")
 
 def process_pdf(pdf_path, chunk_size=500):
     with open(pdf_path, "rb") as file:
@@ -37,7 +44,7 @@ def query_vectors(query, selected_pdf):
     vector = embedder.encode(query).tolist()
     results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
 
-    if results["matches"]:
+    if results and "matches" in results and results["matches"]:
         matched_texts = [match["metadata"]["text"] for match in results["matches"]]
         combined_text = "\n\n".join(matched_texts)
 
@@ -47,7 +54,11 @@ def query_vectors(query, selected_pdf):
             f"User's Question: {query}"
         )
 
-        response = generator(prompt, max_length=200)[0]["generated_text"]
+        try:
+            response = generator(prompt, max_length=200)[0]["generated_text"]
+        except Exception as e:
+            response = f"Error generating response: {str(e)}"
+
         return response
     else:
         return "No relevant information found."
