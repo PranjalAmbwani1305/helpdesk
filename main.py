@@ -21,6 +21,7 @@ index_name = "helpdesk"
 
 # Ensure Index Exists
 if index_name not in pc.list_indexes().names():
+    print("📌 Creating Pinecone Index...")
     pc.create_index(name=index_name, dimension=768, metric="cosine")
 index = pc.Index(index_name)
 
@@ -49,38 +50,43 @@ def store_vectors(structured_data, pdf_name):
     for title, content in structured_data.items():
         vector = embedder.encode(content).tolist()
         
-        # Debugging: Ensure the data is being stored correctly
-        print(f"Storing: {title} -> {len(vector)} dimensions")
+        # Ensure correct metadata storage
+        metadata = {"pdf_name": pdf_name, "chapter": title, "text": content}
         
-        index.upsert([(f"{pdf_name}-{title}", vector, {"pdf_name": pdf_name, "chapter": title, "text": content})])
+        print(f"📌 Storing: {title} in Pinecone with {len(vector)} dimensions")
+        index.upsert([(f"{pdf_name}-{title}", vector, metadata)])
+
+# Function to check if Pinecone is storing data properly
+def debug_pinecone_storage():
+    print("📌 Checking Pinecone index stats:")
+    print(index.describe_index_stats())
+
+    stored_data = index.query(vector=[0]*768, top_k=5, include_metadata=True)
+    print("📌 Sample stored data:", stored_data)
 
 # Function to query Pinecone and retrieve the exact chapter
 def query_vectors(query, selected_pdf):
-    # Extract requested chapter/article number
-    match = re.search(r'(CHAPTER|ARTICLE)\s+(\d+)', query, re.IGNORECASE)
-    requested_section = f"{match.group(1).upper()} {match.group(2)}" if match else None
+    vector = embedder.encode(query).tolist()
     
-    print(f"🔍 Querying for: {requested_section}")  # Debugging
-
-    # Query Pinecone
+    # Debugging
+    print(f"🔍 Querying Pinecone for: {query}")
+    print(f"📌 Using vector of length: {len(vector)}")
+    
     results = index.query(
-        vector=embedder.encode(query).tolist(),
-        top_k=5,
-        include_metadata=True,
+        vector=vector, 
+        top_k=5, 
+        include_metadata=True, 
         filter={"pdf_name": selected_pdf}
     )
 
-    print("🔹 Pinecone Results:", results)  # Debugging
+    print("📌 Pinecone Query Results:", results)  # Debugging
 
     if not results["matches"]:
         return "⚠️ No relevant information found in the selected document."
 
-    # Retrieve only the requested chapter
-    for match in results["matches"]:
-        if requested_section and requested_section in match["metadata"].get("chapter", ""):
-            return f"**Extracted Answer from {requested_section}:**\n\n{match['metadata']['text']}"
-
-    return "⚠️ Requested section not found in the document."
+    matched_texts = [match["metadata"]["text"] for match in results["matches"]]
+    
+    return "\n\n".join(matched_texts)
 
 # Streamlit UI
 st.markdown("<h1 style='text-align: center;'>📜 AI-Powered Legal HelpDesk</h1>", unsafe_allow_html=True)
@@ -95,6 +101,9 @@ if uploaded_file:
     structured_data = process_pdf(temp_pdf_path)
     store_vectors(structured_data, uploaded_file.name)
     st.success("✅ PDF uploaded and processed!")
+
+    # Debugging: Check what was stored
+    debug_pinecone_storage()
 
 # Select from Uploaded PDFs
 pdf_list = [uploaded_file.name] if uploaded_file else []
