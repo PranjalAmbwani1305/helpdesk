@@ -2,8 +2,13 @@ import streamlit as st
 import PyPDF2
 import pinecone
 import numpy as np
+import nltk
+from nltk.tokenize import sent_tokenize
 from deep_translator import GoogleTranslator
 from transformers import pipeline
+
+# Download NLTK data for sentence tokenization
+nltk.download("punkt")
 
 # Initialize Pinecone
 PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
@@ -16,13 +21,25 @@ index = pc.Index(index_name)
 # Hugging Face Embedding Model (No OpenAI)
 embedding_model = pipeline("feature-extraction", model="sentence-transformers/all-MiniLM-L6-v2")
 
-# Function to Process PDF into Chunks
+# Function to Process PDF into Smart Chunks
 def process_pdf(pdf_path, chunk_size=500):
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
-        text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
+        text = " ".join([page.extract_text() for page in reader.pages if page.extract_text()])
+
+    sentences = sent_tokenize(text)  # Split into sentences
+    chunks, current_chunk = [], ""
+
+    for sentence in sentences:
+        if len(current_chunk) + len(sentence) <= chunk_size:
+            current_chunk += " " + sentence  # Add sentence if within limit
+        else:
+            chunks.append(current_chunk.strip())  # Save full chunk
+            current_chunk = sentence  # Start a new chunk
     
-    chunks = [text[i:i+chunk_size].strip() for i in range(0, len(text), chunk_size)]
+    if current_chunk:
+        chunks.append(current_chunk.strip())  # Add last chunk
+
     return chunks
 
 # Store Vectors in Pinecone
@@ -30,7 +47,7 @@ def store_vectors(chunks, pdf_name):
     for i, chunk in enumerate(chunks):
         embeddings = embedding_model(chunk)
 
-        # Ensure embeddings are correctly formatted
+        # Ensure correct embedding format
         if isinstance(embeddings, list):
             embeddings = np.array(embeddings[0])
         else:
@@ -47,7 +64,7 @@ def store_vectors(chunks, pdf_name):
 def query_vectors(query, selected_pdf):
     embeddings = embedding_model(query)
 
-    # Ensure embeddings are correctly formatted
+    # Ensure correct format
     if isinstance(embeddings, list):
         embeddings = np.array(embeddings[0])
     else:
@@ -63,7 +80,7 @@ def query_vectors(query, selected_pdf):
     if results.matches:
         matched_texts = [match.metadata["text"] for match in results.matches]
 
-        # Clean up response format
+        # Format response correctly
         response_text = "\n\n".join(matched_texts)
         response_text = response_text.replace("Article ", "\n\n**Article ").strip()
 
