@@ -1,110 +1,74 @@
+import os
 import streamlit as st
-import PyPDF2
 import pinecone
+import fitz  # PyMuPDF for PDF processing
 import numpy as np
-import re
-from deep_translator import GoogleTranslator
-from transformers import pipeline
+from sentence_transformers import SentenceTransformer
 
-# Initialize Pinecone
-PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
-PINECONE_ENV = st.secrets["PINECONE_ENV"]
+# --- Initialize Pinecone ---
+pinecone.init(api_key="your-pinecone-api-key", environment="your-environment")
+index = pinecone.Index("your-index-name")
 
-pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
-index_name = "helpdesk"
-index = pc.Index(index_name)
+# --- Load Embedding Model ---
+embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Hugging Face Embedding Model
-embedding_model = pipeline("feature-extraction", model="sentence-transformers/all-MiniLM-L6-v2")
+# --- Function to Extract Text from PDF ---
+def extract_text_from_pdf(pdf_path):
+    text = ""
+    with fitz.open(pdf_path) as doc:
+        for page in doc:
+            text += page.get_text("text") + "\n"
+    return text.strip()
 
-# Function to Process PDF into Chunks (without nltk)
-def process_pdf(pdf_path, chunk_size=500):
-    with open(pdf_path, "rb") as file:
-        reader = PyPDF2.PdfReader(file)
-        text = " ".join([page.extract_text() for page in reader.pages if page.extract_text()])
-
-    # Split text into sentences using regex
-    sentences = re.split(r'(?<=[.?!])\s+', text)
-
-    # Group sentences into chunks
+# --- Function for Text Chunking ---
+def chunk_text(text, chunk_size=500, overlap=50):
+    words = text.split()
     chunks = []
-    current_chunk = ""
-
-    for sentence in sentences:
-        if len(current_chunk) + len(sentence) <= chunk_size:
-            current_chunk += " " + sentence
-        else:
-            chunks.append(current_chunk.strip())
-            current_chunk = sentence
-
-    if current_chunk:  # Add the last chunk if not empty
-        chunks.append(current_chunk.strip())
-
+    
+    for i in range(0, len(words), chunk_size - overlap):
+        chunk = " ".join(words[i:i + chunk_size])
+        chunks.append(chunk)
+    
     return chunks
 
-# Store Vectors in Pinecone
+# --- Function to Store Vectors in Pinecone ---
 def store_vectors(chunks, pdf_name):
     for i, chunk in enumerate(chunks):
-        vector = np.array(embedding_model(chunk)).mean(axis=0).tolist()  # Ensure correct embedding format
-        index.upsert([(f"{pdf_name}-doc-{i}", vector, {"pdf_name": pdf_name, "text": chunk})])
+        vector = embedding_model.encode(chunk)  # Get embeddings
+        vector = np.array(vector).tolist()  # Ensure 1D list of floats
+        
+        index.upsert([
+            (f"{pdf_name}-doc-{i}", vector, {"pdf_name": pdf_name, "text": chunk})
+        ])
 
-# Query Pinecone for Answers
-def query_vectors(query, selected_pdf):
-    vector = np.array(embedding_model(query)).mean(axis=0).tolist()
-    results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
+# --- Function to Retrieve Relevant Chunks ---
+def search_similar_chunks(query):
+    query_vector = embedding_model.encode(query).tolist()
+    results = index.query(query_vector, top_k=5, include_metadata=True)
 
-    if results.matches:
-        matched_texts = [match.metadata["text"] for match in results.matches]
-        combined_text = "\n\n".join(matched_texts)
-        return combined_text
-    else:
-        return "No relevant information found in the selected document."
+    return [match["metadata"]["text"] for match in results["matches"]]
 
-# Translate Text
-def translate_text(text, target_language):
-    return GoogleTranslator(source="auto", target=target_language).translate(text)
+# --- Streamlit UI ---
+st.title("AI-Powered Legal HelpDesk 📜🤖")
 
-# Streamlit UI
-st.markdown(
-    "<h1 style='text-align: center;'>📜 AI-Powered Legal HelpDesk for Saudi Arabia</h1>",
-    unsafe_allow_html=True
-)
+uploaded_file = st.file_uploader("Upload a Legal Document (PDF)", type=["pdf"])
 
-# Select PDF Source
-uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
 if uploaded_file:
+    st.success("Processing PDF...")
+    
     temp_pdf_path = f"temp_{uploaded_file.name}"
     with open(temp_pdf_path, "wb") as f:
         f.write(uploaded_file.read())
 
-    chunks = process_pdf(temp_pdf_path)
+    text = extract_text_from_pdf(temp_pdf_path)
+    chunks = chunk_text(text)
     store_vectors(chunks, uploaded_file.name)
-    st.success("✅ PDF uploaded and processed successfully!")
-    selected_pdf = uploaded_file.name
 
-# Language Selection
-input_lang = st.radio("Choose Input Language", ["English", "Arabic"], index=0)
-response_lang = st.radio("Choose Response Language", ["English", "Arabic"], index=0)
+    st.success("PDF successfully processed and stored in Pinecone!")
 
-if input_lang == "Arabic":
-    query = st.text_input("📝 اسأل سؤالاً (باللغة العربية أو الإنجليزية):", key="query_input")
-    st.markdown(
-        "<style>.stTextInput>div>div>input { direction: rtl; text-align: right; }</style>",
-        unsafe_allow_html=True
-    )
-else:
-    query = st.text_input("📝 Ask a question (in English or Arabic):", key="query_input")
-
-# Get Answer
-if st.button("Get Answer"):
-    if uploaded_file and query:
-        detected_lang = GoogleTranslator(source="auto", target="en").translate(query)
-        response = query_vectors(detected_lang, selected_pdf)
-
-        if response_lang == "Arabic":
-            response = translate_text(response, "ar")
-            st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
-        else:
-            st.write(f"**Answer:** {response}")
-    else:
-        st.warning("⚠️ Please enter a query and upload a PDF.")
+query = st.text_input("Ask a Legal Question:")
+if query:
+    results = search_similar_chunks(query)
+    st.subheader("Relevant Information:")
+    for res in results:
+        st.write("- " + res)
