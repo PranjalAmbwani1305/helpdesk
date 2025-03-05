@@ -11,7 +11,7 @@ from sentence_transformers import SentenceTransformer
 PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
 PINECONE_ENV = st.secrets.get("PINECONE_ENV", "us-east-1")  # Default to us-east-1
 
-# Initialize Pinecone (Using Your Preferred Method)
+# Initialize Pinecone
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
@@ -25,7 +25,7 @@ if index_name not in pc.list_indexes().names():
     )
 
 # Wait for index to be ready
-time.sleep(10)
+time.sleep(5)
 
 index = pc.Index(index_name)
 print("✅ Pinecone Index Ready:", index.describe_index_stats())
@@ -41,7 +41,7 @@ def process_pdf(pdf_path):
 
     print("📌 Extracted PDF Text (Preview):", text[:500])  # Show first 500 characters
 
-    # Improved Regex: Supports "CHAPTER ONE: GENERAL PRINCIPLES" and other formats
+    # Split into chapters/articles
     chapters = re.split(r'(CHAPTER\s+ONE:\s+GENERAL\s+PRINCIPLES|CHAPTER\s+\d+|ARTICLE\s+\d+)', text, flags=re.IGNORECASE)
     structured_data = {}
 
@@ -57,6 +57,12 @@ def process_pdf(pdf_path):
 
 # Function to store extracted chapters in Pinecone
 def store_vectors(structured_data, pdf_name):
+    existing_pdfs = [metadata["pdf_name"] for metadata in index.describe_index_stats().get("namespaces", {}).values()]
+    
+    if pdf_name in existing_pdfs:
+        print(f"⚠️ {pdf_name} already exists in Pinecone. Skipping storage.")
+        return
+    
     for title, content in structured_data.items():
         vector = embedder.encode(content).tolist()
 
@@ -104,7 +110,7 @@ def query_vectors(query, selected_pdf):
         vector=vector, 
         top_k=5, 
         include_metadata=True, 
-        filter={"pdf_name": selected_pdf}
+        filter={"pdf_name": {"$eq": selected_pdf}}
     )
 
     print("📌 Pinecone Query Results:", results)
@@ -127,23 +133,33 @@ def query_vectors(query, selected_pdf):
 # Streamlit UI
 st.markdown("<h1 style='text-align: center;'>📜 AI-Powered Legal HelpDesk</h1>", unsafe_allow_html=True)
 
-# File Uploading Section
-uploaded_file = st.file_uploader("📂 Upload a PDF", type=["pdf"])
-if uploaded_file:
-    temp_pdf_path = f"temp_{uploaded_file.name}"
-    with open(temp_pdf_path, "wb") as f:
-        f.write(uploaded_file.read())
-    
-    structured_data = process_pdf(temp_pdf_path)
-    store_vectors(structured_data, uploaded_file.name)
-    st.success("✅ PDF uploaded and processed!")
+# Option to choose existing PDFs or upload new one
+action = st.radio("Choose an action:", ["Use existing PDFs", "Upload a new PDF"])
 
-    # Debugging: Check what was stored
-    debug_pinecone_storage()
+if action == "Upload a new PDF":
+    uploaded_file = st.file_uploader("📂 Upload a PDF", type=["pdf"])
+    if uploaded_file:
+        temp_pdf_path = f"temp_{uploaded_file.name}"
+        with open(temp_pdf_path, "wb") as f:
+            f.write(uploaded_file.read())
 
-# Select from Uploaded PDFs
-pdf_list = [uploaded_file.name] if uploaded_file else []
-selected_pdf = st.selectbox("📖 Select PDF for Query", pdf_list) if pdf_list else None
+        structured_data = process_pdf(temp_pdf_path)
+        store_vectors(structured_data, uploaded_file.name)
+        st.success("✅ PDF uploaded and processed!")
+
+        # Debugging: Check what was stored
+        debug_pinecone_storage()
+
+# Retrieve available PDFs in Pinecone
+index_stats = index.describe_index_stats()
+existing_pdfs = list(index_stats.get("namespaces", {}).keys())
+
+# Select from existing PDFs
+if existing_pdfs:
+    selected_pdf = st.selectbox("📖 Select PDF for Query", existing_pdfs)
+else:
+    selected_pdf = None
+    st.warning("⚠️ No PDFs found in Pinecone. Please upload a PDF.")
 
 # Language selection
 input_lang = st.radio("🌍 Choose Input Language", ["English", "Arabic"], index=0)
