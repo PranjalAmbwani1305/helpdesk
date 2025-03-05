@@ -21,22 +21,22 @@ def process_pdf(pdf_path, chunk_size=500):
         reader = PyPDF2.PdfReader(file)
         text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
     
-    chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+    chunks = [text[i:i+chunk_size].strip() for i in range(0, len(text), chunk_size)]  # Ensuring words are not split
     return chunks
 
 # Store Vectors in Pinecone
 def store_vectors(chunks, pdf_name):
     for i, chunk in enumerate(chunks):
-        vector = embedding_model(chunk)[0][0]
+        vector = embedding_model(chunk)[0]  # Correct embedding extraction
         index.upsert([(f"{pdf_name}-doc-{i}", vector, {"pdf_name": pdf_name, "text": chunk})])
 
 # Query Pinecone for Answers
 def query_vectors(query, selected_pdf):
-    vector = embedding_model(query)[0][0]
+    vector = embedding_model(query)[0]
     results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
 
-    if results["matches"]:
-        matched_texts = [match["metadata"]["text"] for match in results["matches"]]
+    if results.matches:
+        matched_texts = [match.metadata["text"] for match in results.matches]
         combined_text = "\n\n".join(matched_texts)
         return combined_text
     else:
