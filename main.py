@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
 import re
 
+# Load environment variables for Pinecone API key
 load_dotenv()
 
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
@@ -14,25 +15,25 @@ index_name = "helpdesk"
 from pinecone import Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
 
+# Initialize Pinecone index
 index = pc.Index(index_name)
 
+# Initialize sentence transformer model
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Function to process the PDF and extract title and content
+# Function to process PDF, extract titles and contents, and chunk them
 def process_pdf(pdf_path, chunk_size=500):
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
         text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
     
-    # Assume titles are lines with a particular format (like 'Title: <something>')
-    # You can refine this with a more complex regex if necessary
     sections = []
     current_title = None
     current_content = []
-    
-    # Split text into paragraphs or sections (here we assume titles appear before paragraphs)
+
+    # Split text into paragraphs or sections
     paragraphs = text.split('\n')
-    
+
     for para in paragraphs:
         # Check if the paragraph looks like a title (you can adjust this regex to suit your needs)
         if re.match(r'^[A-Z][A-Za-z0-9\s]+$', para.strip()):  # Adjust regex for title pattern
@@ -49,7 +50,7 @@ def process_pdf(pdf_path, chunk_size=500):
     
     return sections
 
-# Store vectors of title-content pairs
+# Function to store vectors of title and content (chunked by article)
 def store_vectors(sections, pdf_name):
     for i, section in enumerate(sections):
         title = section['title']
@@ -61,11 +62,11 @@ def store_vectors(sections, pdf_name):
         
         # Store title and content vectors in Pinecone
         index.upsert([
-            (f"{pdf_name}-title-{i}", title_vector, {"pdf_name": pdf_name, "text": title, "type": "title"}),
-            (f"{pdf_name}-content-{i}", content_vector, {"pdf_name": pdf_name, "text": content, "type": "content"})
+            (f"{pdf_name}-article-{i}-title", title_vector, {"pdf_name": pdf_name, "text": title, "type": "title"}),
+            (f"{pdf_name}-article-{i}-content", content_vector, {"pdf_name": pdf_name, "text": content, "type": "content"})
         ])
 
-# Query for relevant articles
+# Function to query vectors from Pinecone
 def query_vectors(query, selected_pdf):
     vector = model.encode(query).tolist()
     results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
