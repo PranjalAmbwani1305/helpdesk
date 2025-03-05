@@ -26,7 +26,7 @@ def process_pdf(pdf_path, chunk_size=500):
 
     sections = []
     current_chapter = None
-    current_title = None
+    current_article = None
     current_content = []
 
     chapter_pattern = r'^(Chapter \d+|Chapter [A-Za-z]+):.*$'
@@ -40,21 +40,21 @@ def process_pdf(pdf_path, chunk_size=500):
         if re.match(chapter_pattern, para):
             current_chapter = para  # Set new chapter
         elif re.match(article_pattern, para):
-            if current_title:
+            if current_article:
                 sections.append({
                     "chapter": current_chapter,
-                    "title": current_title,
+                    "article": current_article,
                     "content": " ".join(current_content)
                 })
-            current_title = para
+            current_article = para
             current_content = []
         else:
             current_content.append(para)
 
-    if current_title:
+    if current_article:
         sections.append({
             "chapter": current_chapter,
-            "title": current_title,
+            "article": current_article,
             "content": " ".join(current_content)
         })
 
@@ -64,18 +64,18 @@ def process_pdf(pdf_path, chunk_size=500):
 def store_vectors(sections, pdf_name):
     for i, section in enumerate(sections):
         chapter = section['chapter'] if section['chapter'] else "Unknown Chapter"
-        title = section['title']
+        article = section['article'] if section['article'] else "Unknown Article"
         content = section['content']
 
-        title_vector = model.encode(title).tolist()
+        article_vector = model.encode(article).tolist()
         content_vector = model.encode(content).tolist()
 
         index.upsert([
-            (f"{pdf_name}-section-{i}-title", title_vector, {
-                "pdf_name": pdf_name, "chapter": chapter, "text": title, "type": "title"
+            (f"{pdf_name}-section-{i}-article", article_vector, {
+                "pdf_name": pdf_name, "chapter": chapter, "article": article, "text": article, "type": "article"
             }),
             (f"{pdf_name}-section-{i}-content", content_vector, {
-                "pdf_name": pdf_name, "chapter": chapter, "text": content, "type": "content"
+                "pdf_name": pdf_name, "chapter": chapter, "article": article, "text": content, "type": "content"
             })
         ])
 
@@ -83,13 +83,14 @@ def store_vectors(sections, pdf_name):
 def query_vectors(query, selected_pdf):
     vector = model.encode(query).tolist()
     
-    chapter_match = re.match(r'^(Chapter \d+|Chapter [A-Za-z]+)', query.strip(), re.IGNORECASE)
+    # Check if query is asking for a specific article
+    article_match = re.match(r'^(Explain|What is) (Article \d+|Article [A-Za-z]+)', query.strip(), re.IGNORECASE)
     
-    if chapter_match:
-        chapter_name = chapter_match.group(0)
-        results = index.query(vector=vector, top_k=20, include_metadata=True, filter={
+    if article_match:
+        article_name = article_match.group(2)
+        results = index.query(vector=vector, top_k=5, include_metadata=True, filter={
             "pdf_name": {"$eq": selected_pdf}, 
-            "chapter": {"$eq": chapter_name}
+            "article": {"$eq": article_name}
         })
     else:
         results = index.query(vector=vector, top_k=5, include_metadata=True, filter={
@@ -102,22 +103,22 @@ def query_vectors(query, selected_pdf):
         for match in results["matches"]:
             pdf_name = match["metadata"].get("pdf_name", "Unknown PDF")
             chapter = match["metadata"].get("chapter", "Unknown Chapter")
-            article = match["metadata"].get("text", "Unknown Article")
+            article = match["metadata"].get("article", "Unknown Article")
             entry_type = match["metadata"].get("type", "")
 
             if article not in matched_articles:
                 matched_articles[article] = {
                     "pdf_name": pdf_name,
                     "chapter": chapter,
-                    "title": article,
+                    "article": article,
                     "content": ""
                 }
 
             if entry_type == "content":
-                matched_articles[article]["content"] = article
+                matched_articles[article]["content"] = match["metadata"].get("text", "")
 
         response_text = "\n\n".join([
-            f"📄 **PDF:** {entry['pdf_name']}\n📖 **Chapter:** {entry['chapter']}\n📝 **{entry['title']}**\n{entry['content']}"
+            f"📄 **PDF:** {entry['pdf_name']}\n📖 **Chapter:** {entry['chapter']}\n📝 **{entry['article']}**\n{entry['content']}"
             for entry in matched_articles.values()
         ])
         return response_text
