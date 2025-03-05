@@ -23,6 +23,11 @@ PINECONE_ENV = st.secrets.get("PINECONE_ENV", "us-east-1")
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
+if index_name not in pc.list_indexes().names():
+    print("⚠️ Index does not exist. Creating index...")
+    pc.create_index(name=index_name, dimension=1536, metric="cosine")
+
+time.sleep(5)
 index = pc.Index(index_name)
 print("✅ Pinecone Index Ready:", index.describe_index_stats())
 
@@ -46,13 +51,16 @@ def get_existing_pdfs():
 def store_vectors(structured_data, pdf_name):
     """Store extracted document sections into Pinecone."""
     existing_pdfs = get_existing_pdfs()
-    
+
     if pdf_name in existing_pdfs:
         print(f"⚠️ {pdf_name} already exists in Pinecone. Skipping storage.")
         return
-    
-    for title, content in structured_data.items():
+
+    for section in structured_data:
+        title = section["title"]
+        content = section["content"]
         vector = embedder.encode(content).tolist()
+
         metadata = {"pdf_name": pdf_name, "chapter": title, "text": content}
         index.upsert([(f"{pdf_name}-{title}", vector, metadata)])
 
