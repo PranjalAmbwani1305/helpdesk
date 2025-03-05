@@ -55,10 +55,29 @@ def process_pdf(pdf_path):
 
     return structured_data
 
+# Function to check existing PDFs in Pinecone
+def get_existing_pdfs():
+    existing_pdfs = set()
+    try:
+        results = index.query(
+            vector=[0]*1536,  # Use a zero vector for a dummy query
+            top_k=1000,  # Retrieve many results
+            include_metadata=True
+        )
+        for match in results["matches"]:
+            pdf_name = match["metadata"].get("pdf_name", "")
+            if pdf_name:
+                existing_pdfs.add(pdf_name)
+    except Exception as e:
+        print("⚠️ Error checking existing PDFs:", e)
+    
+    return existing_pdfs
+
 # Function to store extracted chapters in Pinecone
 def store_vectors(structured_data, pdf_name):
-    existing_pdfs = [metadata["pdf_name"] for metadata in index.describe_index_stats().get("namespaces", {}).values()]
-    
+    existing_pdfs = get_existing_pdfs()
+
+    # Skip if PDF is already stored
     if pdf_name in existing_pdfs:
         print(f"⚠️ {pdf_name} already exists in Pinecone. Skipping storage.")
         return
@@ -74,28 +93,6 @@ def store_vectors(structured_data, pdf_name):
 
         print(f"📌 Storing: {title} in Pinecone with {len(vector)} dimensions")
         index.upsert([(f"{pdf_name}-{title}", vector, metadata)])
-
-# Function to check if Pinecone is storing data properly
-def debug_pinecone_storage():
-    print("📌 Checking Pinecone stored data...")
-    
-    try:
-        index_stats = index.describe_index_stats()
-        print("📌 Index Stats:", index_stats)
-
-        if index_stats["total_vector_count"] == 0:
-            print("⚠️ No data found in Pinecone. Ensure PDF is processed and stored correctly.")
-            return
-
-        results = index.query(
-            vector=embedder.encode("test query").tolist(),  # Use a real query
-            top_k=5,
-            include_metadata=True
-        )
-
-        print("📌 Sample stored data:", results)
-    except Exception as e:
-        print("⚠️ Pinecone Query Failed:", str(e))
 
 # Function to query Pinecone and retrieve the exact chapter
 def query_vectors(query, selected_pdf):
@@ -147,16 +144,12 @@ if action == "Upload a new PDF":
         store_vectors(structured_data, uploaded_file.name)
         st.success("✅ PDF uploaded and processed!")
 
-        # Debugging: Check what was stored
-        debug_pinecone_storage()
-
 # Retrieve available PDFs in Pinecone
-index_stats = index.describe_index_stats()
-existing_pdfs = list(index_stats.get("namespaces", {}).keys())
+existing_pdfs = get_existing_pdfs()
 
 # Select from existing PDFs
 if existing_pdfs:
-    selected_pdf = st.selectbox("📖 Select PDF for Query", existing_pdfs)
+    selected_pdf = st.selectbox("📖 Select PDF for Query", list(existing_pdfs))
 else:
     selected_pdf = None
     st.warning("⚠️ No PDFs found in Pinecone. Please upload a PDF.")
@@ -174,11 +167,3 @@ if st.button("🔍 Get Answer"):
         detected_lang = GoogleTranslator(source="auto", target="en").translate(query)
         response = query_vectors(detected_lang, selected_pdf)
 
-        # Translate response if needed
-        if response_lang == "Arabic":
-            response = GoogleTranslator(source="en", target="ar").translate(response)
-            st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
-        else:
-            st.markdown(f"<div style='white-space: pre-wrap; font-family: Arial;'>{response}</div>", unsafe_allow_html=True)
-    else:
-        st.warning("⚠️ Please enter a query and select a PDF.")
