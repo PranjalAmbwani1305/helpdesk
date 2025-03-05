@@ -95,7 +95,7 @@ class PDFChunker:
             return []
 
 class PineconeVectorStore:
-    def __init__(self, api_key, index_name="legal-document-index"):
+    def __init__(self, api_key, index_name="helpdesk"):
         self.pc = pinecone.Pinecone(api_key=api_key)
         self.index_name = index_name
         self.dimension = 384  # Match embedding dimension
