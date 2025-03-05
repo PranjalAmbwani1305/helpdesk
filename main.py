@@ -1,170 +1,214 @@
 import streamlit as st
 import pinecone
 import PyPDF2
-import os
 import re
-import time
-from deep_translator import GoogleTranslator
+import numpy as np
+import traceback
 from sentence_transformers import SentenceTransformer
 
-def initialize_pinecone():
-    try:
-        # Securely retrieve Pinecone API key
-        PINECONE_API_KEY = st.secrets.get("PINECONE_API_KEY")
-        if not PINECONE_API_KEY:
-            st.error("Pinecone API Key is missing. Please configure it in Streamlit secrets.")
-            return None
-
-        # Initialize Pinecone with error handling
-        pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
+class PDFChunker:
+    def __init__(self, embedder_model="sentence-transformers/all-MiniLM-L6-v2"):
+        self.embedder = SentenceTransformer(embedder_model)
+    
+    def preprocess_text(self, text):
+        """
+        Clean and normalize text
+        """
+        # Remove extra whitespaces
+        text = re.sub(r'\s+', ' ', text)
         
-        # Use a more robust index name
-        index_name = "helpdesk"
-
-        # Check and create index with error handling
+        # Remove page numbers and headers
+        text = re.sub(r'\b\d+\b', '', text)
+        
+        # Remove multiple newlines
+        text = re.sub(r'\n+', '\n', text)
+        
+        return text.strip()
+    
+    def chunk_text(self, text, max_chunk_size=500, overlap=100):
+        """
+        Split text into semantic chunks with overlap
+        """
+        # Split into sentences
+        sentences = re.split(r'(?<=[.!?])\s+', text)
+        
+        chunks = []
+        current_chunk = []
+        current_length = 0
+        
+        for sentence in sentences:
+            # Add sentence to current chunk
+            current_chunk.append(sentence)
+            current_length += len(sentence)
+            
+            # If chunk is too large, create a new chunk
+            if current_length > max_chunk_size:
+                # Join chunk and add to chunks
+                full_chunk = ' '.join(current_chunk)
+                chunks.append(full_chunk)
+                
+                # Prepare next chunk with overlap
+                current_chunk = current_chunk[-int(overlap/50):]
+                current_length = len(' '.join(current_chunk))
+        
+        # Add last chunk if not empty
+        if current_chunk:
+            chunks.append(' '.join(current_chunk))
+        
+        return chunks
+    
+    def process_pdf(self, uploaded_file):
+        """
+        Extract and chunk PDF content
+        """
         try:
-            if index_name not in pc.list_indexes().names():
-                st.info(f"Creating Pinecone index: {index_name}")
-                pc.create_index(
-                    name=index_name,
-                    dimension=384,  # Adjusted to match the SentenceTransformer model
+            from io import BytesIO
+            
+            # Read PDF
+            reader = PyPDF2.PdfReader(BytesIO(uploaded_file.read()))
+            
+            # Extract full text
+            full_text = []
+            for page in reader.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    full_text.append(self.preprocess_text(page_text))
+            
+            # Combine and chunk text
+            combined_text = ' '.join(full_text)
+            chunks = self.chunk_text(combined_text)
+            
+            # Organize chunks with metadata
+            structured_chunks = []
+            for i, chunk in enumerate(chunks):
+                structured_chunks.append({
+                    'id': f'chunk_{i}',
+                    'text': chunk,
+                    'embedding': self.embedder.encode(chunk).tolist()
+                })
+            
+            return structured_chunks
+        
+        except Exception as e:
+            st.error(f"PDF Processing Error: {e}")
+            traceback.print_exc()
+            return []
+
+class PineconeVectorStore:
+    def __init__(self, api_key, index_name="legal-document-index"):
+        self.pc = pinecone.Pinecone(api_key=api_key)
+        self.index_name = index_name
+        self.dimension = 384  # Match embedding dimension
+    
+    def create_index(self):
+        """
+        Create Pinecone index if not exists
+        """
+        try:
+            if self.index_name not in self.pc.list_indexes().names():
+                self.pc.create_index(
+                    name=self.index_name,
+                    dimension=self.dimension,
                     metric="cosine"
                 )
-                time.sleep(5)  # Wait for index initialization
+            return self.pc.Index(self.index_name)
         except Exception as e:
-            st.error(f"Error creating Pinecone index: {e}")
+            st.error(f"Pinecone Index Creation Error: {e}")
             return None
-
-        # Initialize index
+    
+    def store_document(self, index, pdf_name, chunks):
+        """
+        Store document chunks in Pinecone
+        """
         try:
-            index = pc.Index(index_name)
-            st.success("Pinecone Index initialized successfully")
-            return index
-        except Exception as e:
-            st.error(f"Error initializing Pinecone index: {e}")
-            return None
-
-    except Exception as e:
-        st.error(f"Pinecone initialization error: {e}")
-        return None
-
-def process_pdf(uploaded_file):
-    try:
-        # Use BytesIO for in-memory file handling
-        from io import BytesIO
-        
-        reader = PyPDF2.PdfReader(BytesIO(uploaded_file.read()))
-        text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
-
-        # More robust chapter splitting
-        chapters = re.split(r'(CHAPTER\s+(?:ONE|[0-9]+):|ARTICLE\s+[0-9]+:)', text, flags=re.IGNORECASE)
-        structured_data = {}
-
-        for i in range(1, len(chapters), 2):
-            chapter_title = chapters[i].strip()
-            chapter_content = chapters[i + 1].strip() if i + 1 < len(chapters) else ""
-            
-            if chapter_content:
-                structured_data[chapter_title] = chapter_content
-
-        return structured_data
-    except Exception as e:
-        st.error(f"PDF processing error: {e}")
-        return {}
-
-def get_existing_pdfs(index):
-    try:
-        # More robust method to retrieve existing PDFs
-        results = index.query(
-            vector=[0]*384,  # Zero vector matching model dimension
-            top_k=1000,
-            include_metadata=True
-        )
-        return {match['metadata'].get('pdf_name', '') for match in results.get('matches', [])}
-    except Exception as e:
-        st.error(f"Error retrieving existing PDFs: {e}")
-        return set()
-
-def store_vectors(index, structured_data, pdf_name, embedder):
-    try:
-        # Check if PDF already exists
-        existing_pdfs = get_existing_pdfs(index)
-        if pdf_name in existing_pdfs:
-            st.warning(f"{pdf_name} already exists in Pinecone. Skipping storage.")
-            return
-
-        # Store each chapter as a vector
-        for title, content in structured_data.items():
-            try:
-                vector = embedder.encode(content).tolist()
+            for chunk in chunks:
                 metadata = {
-                    "pdf_name": pdf_name,
-                    "chapter": title,
-                    "text": content
+                    'pdf_name': pdf_name,
+                    'text': chunk['text']
                 }
-                vector_id = f"{pdf_name}-{title}"
-                index.upsert([(vector_id, vector, metadata)])
-            except Exception as chapter_error:
-                st.error(f"Error storing chapter {title}: {chapter_error}")
-
-        st.success(f"Successfully stored vectors for {pdf_name}")
-    except Exception as e:
-        st.error(f"Vector storage error: {e}")
-
-def query_vectors(index, embedder, query, selected_pdf):
-    try:
-        # Enhanced query processing
-        vector = embedder.encode(query).tolist()
-        
-        results = index.query(
-            vector=vector, 
-            top_k=5, 
-            include_metadata=True, 
-            filter={"pdf_name": {"$eq": selected_pdf}}
-        )
-
-        if not results.get('matches'):
-            return "No relevant information found in the document."
-
-        # Return the most relevant match
-        best_match = results['matches'][0]
-        return f"**Extracted Answer:**\n\n{best_match['metadata'].get('text', '')}"
-
-    except Exception as e:
-        st.error(f"Query processing error: {e}")
-        return f"Error processing query: {e}"
+                index.upsert([
+                    (chunk['id'], chunk['embedding'], metadata)
+                ])
+            st.success(f"Stored {len(chunks)} chunks for {pdf_name}")
+        except Exception as e:
+            st.error(f"Vector Storage Error: {e}")
+    
+    def semantic_search(self, index, embedder, query, pdf_name, top_k=3):
+        """
+        Perform semantic search across document chunks
+        """
+        try:
+            # Embed query
+            query_embedding = embedder.encode(query).tolist()
+            
+            # Perform similarity search
+            results = index.query(
+                vector=query_embedding,
+                top_k=top_k,
+                include_metadata=True,
+                filter={"pdf_name": {"$eq": pdf_name}}
+            )
+            
+            # Format response
+            response = "### Relevant Passages:\n\n"
+            for match in results['matches']:
+                metadata = match.get('metadata', {})
+                response += f"**Relevance Score: {match['score']:.2%}**\n"
+                response += f"{metadata.get('text', 'No text found')}\n\n---\n\n"
+            
+            return response
+        except Exception as e:
+            st.error(f"Semantic Search Error: {e}")
+            return f"Search Error: {e}"
 
 def main():
-    st.markdown("<h1 style='text-align: center;'>📜 AI-Powered Legal HelpDesk</h1>", unsafe_allow_html=True)
-
-    # Initialize embedder outside of function to avoid repeated loading
-    embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+    st.title("📄 Advanced PDF Search Engine")
     
-    # Initialize Pinecone
-    index = initialize_pinecone()
-    if not index:
-        st.stop()
-
-    # PDF Upload and Processing
-    uploaded_file = st.file_uploader("📂 Upload a PDF", type=["pdf"])
-    if uploaded_file:
-        structured_data = process_pdf(uploaded_file)
-        store_vectors(index, structured_data, uploaded_file.name, embedder)
-
-    # Language Selection and Query
-    st.write("### Query Document")
-    selected_pdf = st.selectbox("Select PDF", list(get_existing_pdfs(index)) or ["No PDFs uploaded"])
+    # Initialize components
+    chunker = PDFChunker()
     
-    if selected_pdf == "No PDFs uploaded":
-        st.warning("Please upload a PDF first.")
+    # Pinecone API Key (replace with your method of key retrieval)
+    PINECONE_API_KEY = st.secrets.get("PINECONE_API_KEY")
+    if not PINECONE_API_KEY:
+        st.error("Pinecone API Key is required!")
         return
-
+    
+    vector_store = PineconeVectorStore(PINECONE_API_KEY)
+    index = vector_store.create_index()
+    
+    if not index:
+        st.error("Failed to create Pinecone index")
+        return
+    
+    # PDF Upload
+    uploaded_file = st.file_uploader("Upload PDF", type=['pdf'])
+    
+    if uploaded_file:
+        # Process PDF
+        chunks = chunker.process_pdf(uploaded_file)
+        
+        # Store in Pinecone
+        vector_store.store_document(index, uploaded_file.name, chunks)
+        
+        # Preview chunks
+        st.write("### Extracted Text Chunks:")
+        for chunk in chunks[:5]:
+            st.text_area(f"Chunk {chunk['id']}", chunk['text'], height=100)
+    
+    # Query Interface
+    st.header("Search Document")
     query = st.text_input("Ask a question about the document")
     
-    if st.button("Search Document"):
-        if query and selected_pdf:
-            response = query_vectors(index, embedder, query, selected_pdf)
-            st.markdown(response)
+    if st.button("Search"):
+        if query and uploaded_file:
+            # Perform semantic search
+            results = vector_store.semantic_search(
+                index, 
+                chunker.embedder, 
+                query, 
+                uploaded_file.name
+            )
+            st.markdown(results)
 
 if __name__ == "__main__":
     main()
