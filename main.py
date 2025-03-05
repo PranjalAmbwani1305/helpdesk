@@ -1,3 +1,11 @@
+import asyncio
+
+# Fix for "RuntimeError: no running event loop"
+try:
+    asyncio.get_running_loop()
+except RuntimeError:
+    asyncio.run(asyncio.sleep(0))
+
 import streamlit as st
 import pinecone
 import PyPDF2
@@ -15,11 +23,16 @@ PINECONE_ENV = st.secrets.get("PINECONE_ENV", "us-east-1")
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
+if index_name not in pc.list_indexes().names():
+    print("⚠️ Index does not exist. Creating index...")
+    pc.create_index(name=index_name, dimension=1536, metric="cosine")
+
+time.sleep(5)
 index = pc.Index(index_name)
 print("✅ Pinecone Index Ready:", index.describe_index_stats())
 
 # === 📌 AI Model === #
-embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2", device="cpu")
 
 # === 📌 Helper Functions === #
 def get_existing_pdfs():
@@ -140,3 +153,49 @@ def main():
             st.success(f"✅ Document '{uploaded_file.name}' saved successfully!")
 
             # Extract and store in Pinecone
+            full_text = extract_text(file_path)
+            structured_data = split_into_sections(full_text)
+            store_vectors(structured_data, uploaded_file.name)
+
+    # Retrieve available PDFs
+    existing_pdfs = get_existing_pdfs()
+
+    if existing_pdfs:
+        selected_pdf = st.selectbox("📖 Select PDF for Query", list(existing_pdfs))
+    else:
+        selected_pdf = None
+        st.warning("⚠️ No PDFs found in Pinecone. Please upload a PDF.")
+
+    # Language selection
+    input_lang = st.radio("🌍 Choose Input Language", ["English", "Arabic"], index=0)
+    response_lang = st.radio("🌍 Choose Response Language", ["English", "Arabic"], index=0)
+
+    # User query input
+    query = st.text_input("🔎 Ask a legal question:")
+
+    if st.button("🔍 Get Answer"):
+        if selected_pdf and query:
+            # Retrieve text from Pinecone
+            results = index.query(
+                vector=embedder.encode(query).tolist(), 
+                top_k=5, 
+                include_metadata=True, 
+                filter={"pdf_name": {"$eq": selected_pdf}}
+            )
+
+            if results["matches"]:
+                response = results["matches"][0]["metadata"]["text"]
+            else:
+                response = "⚠️ No relevant information found in the selected document."
+
+            # Translate response if needed
+            if response_lang == "Arabic":
+                response = translate_response(response, "ar")
+                st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
+            else:
+                st.write(f"**Answer:** {response}")
+        else:
+            st.warning("⚠️ Please enter a query and select a PDF.")
+
+if __name__ == "__main__":
+    main()
