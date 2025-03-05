@@ -83,27 +83,33 @@ def query_vectors(query, selected_pdf):
 # Streamlit UI
 st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk</h1>", unsafe_allow_html=True)
 
-uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
-if uploaded_file:
-    temp_pdf_path = f"temp_{uploaded_file.name}"
-    with open(temp_pdf_path, "wb") as f:
-        f.write(uploaded_file.read())
+# PDF Source Selection: Upload or Choose from Document Storage
+pdf_source = st.radio("Select PDF Source", ("Upload from PC", "Choose from Document Storage"))
 
-    # Process the PDF and store the extracted content
-    sections = process_pdf(temp_pdf_path)
-    
-    # Debugging: Print out titles and first part of content for verification
-    for section in sections:
-        st.write(f"Title: {section['title']}")
-        st.write(f"Content (first 500 characters): {section['content'][:500]}...")  # Print the first 500 characters of content
+if pdf_source == "Upload from PC":
+    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
+    if uploaded_file:
+        temp_pdf_path = f"temp_{uploaded_file.name}"
+        with open(temp_pdf_path, "wb") as f:
+            f.write(uploaded_file.read())
+        
+        sections = process_pdf(temp_pdf_path)
+        store_vectors(sections, uploaded_file.name)
+        st.success("PDF uploaded and processed!")
+else:
+    # Document Storage Placeholder (Could be replaced with actual cloud storage functionality)
+    st.info("Document Storage feature is currently unavailable.")
 
-    store_vectors(sections, uploaded_file.name)
-    st.success("PDF uploaded and processed!")
+# Language Selection
+input_language = st.selectbox("Choose Input Language", ("English", "Arabic"))
+response_language = st.selectbox("Choose Response Language", ("English", "Arabic"))
 
+# Query Input and Processing
 query = st.text_input("Ask a legal question:")
+
 if st.button("Get Answer"):
-    if uploaded_file and query:
-        response = query_vectors(query, uploaded_file.name)
+    if query:
+        response = query_vectors(query, uploaded_file.name if uploaded_file else "")
         st.write(f"**Answer:** {response}")
     else:
         st.warning("Please upload a PDF and enter a query.")
