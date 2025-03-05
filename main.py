@@ -22,35 +22,19 @@ def process_pdf(pdf_path, chunk_size=500):
         reader = PyPDF2.PdfReader(file)
         text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
     
-    chunks = [text[i:i+chunk_size].strip() for i in range(0, len(text), chunk_size) if text[i:i+chunk_size].strip()]
+    chunks = [text[i:i+chunk_size].strip() for i in range(0, len(text), chunk_size)]  # Ensuring words are not split
     return chunks
 
 # Store Vectors in Pinecone
 def store_vectors(chunks, pdf_name):
     for i, chunk in enumerate(chunks):
-        embeddings = embedding_model(chunk)
-        
-        # Ensure embeddings are correctly formatted
-        if isinstance(embeddings, list):
-            embeddings = np.array(embeddings[0])  
-        else:
-            embeddings = np.array(embeddings)
+        vector = np.array(embedding_model(chunk)).mean(axis=0).tolist()  # Ensure correct embedding format
+        index.upsert([(f"{pdf_name}-doc-{i}", vector, {"pdf_name": pdf_name, "text": chunk})])
 
-        if embeddings.ndim > 1:
-            embeddings = embeddings.mean(axis=0)  # Ensure correct format
-
-        vector = embeddings.tolist()
-
-        # Ensure vector size is exactly 384
-        if len(vector) == 384:
-            index.upsert([(f"{pdf_name}-doc-{i}", vector, {"pdf_name": pdf_name, "text": chunk})])
-        else:
-            st.warning(f"Skipping chunk {i} due to incorrect vector size: {len(vector)}")
-
-# Query Pinecone for Answers
+# Query Pinecone for Answers (Updated)
 def query_vectors(query, selected_pdf):
     embeddings = embedding_model(query)
-    
+
     # Ensure query embedding is correctly formatted
     if isinstance(embeddings, list):
         embeddings = np.array(embeddings[0])  
@@ -71,7 +55,12 @@ def query_vectors(query, selected_pdf):
     
     if results.matches:
         matched_texts = [match.metadata["text"] for match in results.matches]
-        return "\n\n".join(matched_texts)
+
+        # Clean up response
+        response_text = "\n\n".join(matched_texts)
+        response_text = response_text.replace("Article ", "\n\n**Article ").strip()
+
+        return response_text
     else:
         return "No relevant information found."
 
