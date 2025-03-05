@@ -89,7 +89,14 @@ if uploaded_file:
     with open(temp_pdf_path, "wb") as f:
         f.write(uploaded_file.read())
 
+    # Process the PDF and store the extracted content
     sections = process_pdf(temp_pdf_path)
+    
+    # Debugging: Print out titles and first part of content for verification
+    for section in sections:
+        st.write(f"Title: {section['title']}")
+        st.write(f"Content (first 500 characters): {section['content'][:500]}...")  # Print the first 500 characters of content
+
     store_vectors(sections, uploaded_file.name)
     st.success("PDF uploaded and processed!")
 
