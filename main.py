@@ -13,13 +13,6 @@ index_name = "helpdesk"
 from pinecone import Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
 
-if index_name not in pc.list_indexes().names():
-    pc.create_index(
-        name=index_name,
-        dimension=768,  # Adjust based on the embedding model
-        metric="cosine"
-    )
-
 index = pc.Index(index_name)
 
 model = SentenceTransformer("all-MiniLM-L6-v2")
