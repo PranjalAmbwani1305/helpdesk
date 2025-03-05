@@ -7,163 +7,164 @@ import time
 from deep_translator import GoogleTranslator
 from sentence_transformers import SentenceTransformer
 
-# Read API Key from Streamlit Secrets
-PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
-PINECONE_ENV = st.secrets.get("PINECONE_ENV", "us-east-1")  # Default to us-east-1
+def initialize_pinecone():
+    try:
+        # Securely retrieve Pinecone API key
+        PINECONE_API_KEY = st.secrets.get("PINECONE_API_KEY")
+        if not PINECONE_API_KEY:
+            st.error("Pinecone API Key is missing. Please configure it in Streamlit secrets.")
+            return None
 
-# Initialize Pinecone
-pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
-index_name = "helpdesk"
+        # Initialize Pinecone with error handling
+        pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
+        
+        # Use a more robust index name
+        index_name = "legal-helpdesk-index"
 
-# Ensure the index exists
-if index_name not in pc.list_indexes().names():
-    print("⚠️ Index does not exist. Creating index...")
-    pc.create_index(
-        name=index_name,
-        dimension=1536,  
-        metric="cosine"
-    )
+        # Check and create index with error handling
+        try:
+            if index_name not in pc.list_indexes().names():
+                st.info(f"Creating Pinecone index: {index_name}")
+                pc.create_index(
+                    name=index_name,
+                    dimension=384,  # Adjusted to match the SentenceTransformer model
+                    metric="cosine"
+                )
+                time.sleep(5)  # Wait for index initialization
+        except Exception as e:
+            st.error(f"Error creating Pinecone index: {e}")
+            return None
 
-# Wait for index to be ready
-time.sleep(5)
+        # Initialize index
+        try:
+            index = pc.Index(index_name)
+            st.success("Pinecone Index initialized successfully")
+            return index
+        except Exception as e:
+            st.error(f"Error initializing Pinecone index: {e}")
+            return None
 
-index = pc.Index(index_name)
-print("✅ Pinecone Index Ready:", index.describe_index_stats())
+    except Exception as e:
+        st.error(f"Pinecone initialization error: {e}")
+        return None
 
-# Load Sentence Transformer model for embeddings
-embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-
-# Function to extract structured chapters from PDF
-def process_pdf(pdf_path):
-    with open(pdf_path, "rb") as file:
-        reader = PyPDF2.PdfReader(file)
+def process_pdf(uploaded_file):
+    try:
+        # Use BytesIO for in-memory file handling
+        from io import BytesIO
+        
+        reader = PyPDF2.PdfReader(BytesIO(uploaded_file.read()))
         text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
 
-    print("📌 Extracted PDF Text (Preview):", text[:500])  # Show first 500 characters
+        # More robust chapter splitting
+        chapters = re.split(r'(CHAPTER\s+(?:ONE|[0-9]+):|ARTICLE\s+[0-9]+:)', text, flags=re.IGNORECASE)
+        structured_data = {}
 
-    # Split into chapters/articles
-    chapters = re.split(r'(CHAPTER\s+ONE:\s+GENERAL\s+PRINCIPLES|CHAPTER\s+\d+|ARTICLE\s+\d+)', text, flags=re.IGNORECASE)
-    structured_data = {}
+        for i in range(1, len(chapters), 2):
+            chapter_title = chapters[i].strip()
+            chapter_content = chapters[i + 1].strip() if i + 1 < len(chapters) else ""
+            
+            if chapter_content:
+                structured_data[chapter_title] = chapter_content
 
-    for i in range(1, len(chapters), 2):
-        chapter_title = chapters[i].strip()
-        chapter_content = chapters[i + 1].strip() if i + 1 < len(chapters) else ""
-        
-        print(f"📌 Extracted: {chapter_title} -> {len(chapter_content)} characters")  # Debugging
+        return structured_data
+    except Exception as e:
+        st.error(f"PDF processing error: {e}")
+        return {}
 
-        structured_data[chapter_title] = chapter_content
-
-    return structured_data
-
-# Function to check existing PDFs in Pinecone
-def get_existing_pdfs():
-    existing_pdfs = set()
+def get_existing_pdfs(index):
     try:
+        # More robust method to retrieve existing PDFs
         results = index.query(
-            vector=[0]*1536,  # Use a zero vector for a dummy query
-            top_k=1000,  # Retrieve many results
+            vector=[0]*384,  # Zero vector matching model dimension
+            top_k=1000,
             include_metadata=True
         )
-        for match in results["matches"]:
-            pdf_name = match["metadata"].get("pdf_name", "")
-            if pdf_name:
-                existing_pdfs.add(pdf_name)
+        return {match['metadata'].get('pdf_name', '') for match in results.get('matches', [])}
     except Exception as e:
-        print("⚠️ Error checking existing PDFs:", e)
+        st.error(f"Error retrieving existing PDFs: {e}")
+        return set()
+
+def store_vectors(index, structured_data, pdf_name, embedder):
+    try:
+        # Check if PDF already exists
+        existing_pdfs = get_existing_pdfs(index)
+        if pdf_name in existing_pdfs:
+            st.warning(f"{pdf_name} already exists in Pinecone. Skipping storage.")
+            return
+
+        # Store each chapter as a vector
+        for title, content in structured_data.items():
+            try:
+                vector = embedder.encode(content).tolist()
+                metadata = {
+                    "pdf_name": pdf_name,
+                    "chapter": title,
+                    "text": content
+                }
+                vector_id = f"{pdf_name}-{title}"
+                index.upsert([(vector_id, vector, metadata)])
+            except Exception as chapter_error:
+                st.error(f"Error storing chapter {title}: {chapter_error}")
+
+        st.success(f"Successfully stored vectors for {pdf_name}")
+    except Exception as e:
+        st.error(f"Vector storage error: {e}")
+
+def query_vectors(index, embedder, query, selected_pdf):
+    try:
+        # Enhanced query processing
+        vector = embedder.encode(query).tolist()
+        
+        results = index.query(
+            vector=vector, 
+            top_k=5, 
+            include_metadata=True, 
+            filter={"pdf_name": {"$eq": selected_pdf}}
+        )
+
+        if not results.get('matches'):
+            return "No relevant information found in the document."
+
+        # Return the most relevant match
+        best_match = results['matches'][0]
+        return f"**Extracted Answer:**\n\n{best_match['metadata'].get('text', '')}"
+
+    except Exception as e:
+        st.error(f"Query processing error: {e}")
+        return f"Error processing query: {e}"
+
+def main():
+    st.markdown("<h1 style='text-align: center;'>📜 AI-Powered Legal HelpDesk</h1>", unsafe_allow_html=True)
+
+    # Initialize embedder outside of function to avoid repeated loading
+    embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
     
-    return existing_pdfs
+    # Initialize Pinecone
+    index = initialize_pinecone()
+    if not index:
+        st.stop()
 
-# Function to store extracted chapters in Pinecone
-def store_vectors(structured_data, pdf_name):
-    existing_pdfs = get_existing_pdfs()
-
-    # Skip if PDF is already stored
-    if pdf_name in existing_pdfs:
-        print(f"⚠️ {pdf_name} already exists in Pinecone. Skipping storage.")
-        return
-    
-    for title, content in structured_data.items():
-        vector = embedder.encode(content).tolist()
-
-        metadata = {
-            "pdf_name": pdf_name,
-            "chapter": title,  
-            "text": content
-        }
-
-        print(f"📌 Storing: {title} in Pinecone with {len(vector)} dimensions")
-        index.upsert([(f"{pdf_name}-{title}", vector, metadata)])
-
-# Function to query Pinecone and retrieve the exact chapter
-def query_vectors(query, selected_pdf):
-    match = re.search(r'(CHAPTER\s+ONE:\s+GENERAL\s+PRINCIPLES|CHAPTER\s+\d+|ARTICLE\s+\d+)', query, re.IGNORECASE)
-    requested_section = match.group(1).upper() if match else None
-
-    print(f"🔍 Requested Section: {requested_section}")  # Debugging
-
-    vector = embedder.encode(query).tolist()
-    
-    results = index.query(
-        vector=vector, 
-        top_k=5, 
-        include_metadata=True, 
-        filter={"pdf_name": {"$eq": selected_pdf}}
-    )
-
-    print("📌 Pinecone Query Results:", results)
-
-    if not results["matches"]:
-        return "⚠️ No relevant information found in the selected document."
-
-    for match in results["matches"]:
-        stored_chapter = match["metadata"].get("chapter", "")
-        stored_text = match["metadata"].get("text", "")
-
-        print(f"📌 Found stored chapter: {stored_chapter}")  # Debugging
-        print(f"📌 Stored text preview: {stored_text[:200]}")  # Show first 200 characters
-
-        if requested_section and requested_section in stored_chapter:
-            return f"**Extracted Answer from {requested_section}:**\n\n{stored_text}"
-
-    return "⚠️ Requested section not found in the document."
-
-# Streamlit UI
-st.markdown("<h1 style='text-align: center;'>📜 AI-Powered Legal HelpDesk</h1>", unsafe_allow_html=True)
-
-# Option to choose existing PDFs or upload new one
-action = st.radio("Choose an action:", ["Use existing PDFs", "Upload a new PDF"])
-
-if action == "Upload a new PDF":
+    # PDF Upload and Processing
     uploaded_file = st.file_uploader("📂 Upload a PDF", type=["pdf"])
     if uploaded_file:
-        temp_pdf_path = f"temp_{uploaded_file.name}"
-        with open(temp_pdf_path, "wb") as f:
-            f.write(uploaded_file.read())
+        structured_data = process_pdf(uploaded_file)
+        store_vectors(index, structured_data, uploaded_file.name, embedder)
 
-        structured_data = process_pdf(temp_pdf_path)
-        store_vectors(structured_data, uploaded_file.name)
-        st.success("✅ PDF uploaded and processed!")
+    # Language Selection and Query
+    st.write("### Query Document")
+    selected_pdf = st.selectbox("Select PDF", list(get_existing_pdfs(index)) or ["No PDFs uploaded"])
+    
+    if selected_pdf == "No PDFs uploaded":
+        st.warning("Please upload a PDF first.")
+        return
 
-# Retrieve available PDFs in Pinecone
-existing_pdfs = get_existing_pdfs()
+    query = st.text_input("Ask a question about the document")
+    
+    if st.button("Search Document"):
+        if query and selected_pdf:
+            response = query_vectors(index, embedder, query, selected_pdf)
+            st.markdown(response)
 
-# Select from existing PDFs
-if existing_pdfs:
-    selected_pdf = st.selectbox("📖 Select PDF for Query", list(existing_pdfs))
-else:
-    selected_pdf = None
-    st.warning("⚠️ No PDFs found in Pinecone. Please upload a PDF.")
-
-# Language selection
-input_lang = st.radio("🌍 Choose Input Language", ["English", "Arabic"], index=0)
-response_lang = st.radio("🌍 Choose Response Language", ["English", "Arabic"], index=0)
-
-# User query input
-query = st.text_input("🔎 Ask a question (e.g., 'Chapter One: General Principles'):" if input_lang == "English" else "📝 اسأل سؤالاً (مثل 'الفصل الأول: المبادئ العامة'): ")
-
-if st.button("🔍 Get Answer"):
-    if selected_pdf and query:
-        # Translate query to English for processing
-        detected_lang = GoogleTranslator(source="auto", target="en").translate(query)
-        response = query_vectors(detected_lang, selected_pdf)
-
+if __name__ == "__main__":
+    main()
