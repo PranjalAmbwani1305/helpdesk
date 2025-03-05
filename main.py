@@ -15,8 +15,8 @@ PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
 
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
-
 index_name = "helpdesk"
+
 index = pc.Index(index_name)
 
 # Function to extract text and chunk it based on Chapters and Articles
