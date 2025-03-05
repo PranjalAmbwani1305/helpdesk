@@ -22,26 +22,58 @@ def process_pdf(pdf_path, chunk_size=500):
         reader = PyPDF2.PdfReader(file)
         text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
     
-    chunks = [text[i:i+chunk_size].strip() for i in range(0, len(text), chunk_size)]  # Ensuring words are not split
+    chunks = [text[i:i+chunk_size].strip() for i in range(0, len(text), chunk_size) if text[i:i+chunk_size].strip()]
     return chunks
 
 # Store Vectors in Pinecone
 def store_vectors(chunks, pdf_name):
     for i, chunk in enumerate(chunks):
-        vector = np.array(embedding_model(chunk)).mean(axis=0).tolist()  # Ensure correct embedding format
-        index.upsert([(f"{pdf_name}-doc-{i}", vector, {"pdf_name": pdf_name, "text": chunk})])
+        embeddings = embedding_model(chunk)
+        
+        # Ensure embeddings are correctly formatted
+        if isinstance(embeddings, list):
+            embeddings = np.array(embeddings[0])  
+        else:
+            embeddings = np.array(embeddings)
+
+        if embeddings.ndim > 1:
+            embeddings = embeddings.mean(axis=0)  # Ensure correct format
+
+        vector = embeddings.tolist()
+
+        # Ensure vector size is exactly 384
+        if len(vector) == 384:
+            index.upsert([(f"{pdf_name}-doc-{i}", vector, {"pdf_name": pdf_name, "text": chunk})])
+        else:
+            st.warning(f"Skipping chunk {i} due to incorrect vector size: {len(vector)}")
 
 # Query Pinecone for Answers
 def query_vectors(query, selected_pdf):
-    vector = np.array(embedding_model(query)).mean(axis=0).tolist()
-    results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
+    embeddings = embedding_model(query)
+    
+    # Ensure query embedding is correctly formatted
+    if isinstance(embeddings, list):
+        embeddings = np.array(embeddings[0])  
+    else:
+        embeddings = np.array(embeddings)
 
+    if embeddings.ndim > 1:
+        embeddings = embeddings.mean(axis=0)
+
+    vector = embeddings.tolist()
+
+    # Validate vector size
+    if len(vector) != 384:
+        st.error(f"Error: Query embedding size mismatch ({len(vector)} instead of 384).")
+        return "Embedding size mismatch. Please try again."
+
+    results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
+    
     if results.matches:
         matched_texts = [match.metadata["text"] for match in results.matches]
-        combined_text = "\n\n".join(matched_texts)
-        return combined_text
+        return "\n\n".join(matched_texts)
     else:
-        return "No relevant information found in the selected document."
+        return "No relevant information found."
 
 # Translate Text
 def translate_text(text, target_language):
