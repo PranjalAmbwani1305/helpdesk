@@ -45,17 +45,17 @@ def process_pdf(pdf_path):
 
 # Function to store extracted chapters in Pinecone
 def store_vectors(structured_data, pdf_name):
+    vectors = []
     for title, content in structured_data.items():
         vector = embedder.encode(content).tolist()
-
         metadata = {
             "pdf_name": pdf_name,
             "chapter": title,  
             "text": content
         }
-
         print(f"📌 Storing: {title} in Pinecone with {len(vector)} dimensions")
-        index.upsert([(f"{pdf_name}-{title}", vector, metadata)])
+        vectors.append((f"{pdf_name}-{title}", vector, metadata))
+    index.upsert(vectors)
 
 # Function to query Pinecone and retrieve the exact chapter
 def query_vectors(query, selected_pdf):
@@ -70,7 +70,7 @@ def query_vectors(query, selected_pdf):
         vector=vector, 
         top_k=5, 
         include_metadata=True, 
-        filter={"pdf_name": {"$eq": selected_pdf}}
+        filter={"pdf_name": selected_pdf}
     )
 
     print("📌 Pinecone Query Results:", results)
@@ -108,9 +108,9 @@ if action == "Upload a new PDF":
         st.success("✅ PDF uploaded and processed!")
 
 # Querying existing PDFs
-existing_pdfs = [match["metadata"]["pdf_name"] for match in index.query(vector=[0]*384, top_k=10, include_metadata=True)["matches"]]
+existing_pdfs = list(set([match["metadata"]["pdf_name"] for match in index.query(vector=[0]*384, top_k=10, include_metadata=True)["matches"]]))
 if existing_pdfs:
-    selected_pdf = st.selectbox("📖 Select PDF for Query", list(set(existing_pdfs)))
+    selected_pdf = st.selectbox("📖 Select PDF for Query", existing_pdfs)
     user_query = st.text_input("🔍 Enter your legal query:")
     if st.button("Get Answer") and user_query:
         answer = query_vectors(user_query, selected_pdf)
