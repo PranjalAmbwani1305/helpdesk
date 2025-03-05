@@ -8,3 +8,4 @@ deep-translator
 pypdf2
 pinecone
 torch
+nltk
