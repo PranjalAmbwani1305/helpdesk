@@ -1,254 +1,184 @@
 import streamlit as st
+import pinecone
 import PyPDF2
-import numpy as np
 import os
 import re
-from sentence_transformers import SentenceTransformer
+import time
 from deep_translator import GoogleTranslator
+from sentence_transformers import SentenceTransformer
 
-class SaudiLegalHelpDesk:
-    def __init__(self):
-        # Initialize multilingual embedding model
-        self.model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
-        
-        # Create document storage directory if not exists
-        self.storage_dir = "document_storage"
-        os.makedirs(self.storage_dir, exist_ok=True)
-        
-        # Initialize document storage
-        self.document_storage = self._get_stored_documents()
-    
-    def _get_stored_documents(self):
-        """Retrieve list of documents in storage directory"""
-        try:
-            return [f for f in os.listdir(self.storage_dir) if f.endswith('.pdf')]
-        except Exception as e:
-            st.error(f"Error accessing document storage: {e}")
-            return []
-    
-    def save_uploaded_document(self, uploaded_file):
-        """Save uploaded document to storage"""
-        try:
-            file_path = os.path.join(self.storage_dir, uploaded_file.name)
-            with open(file_path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            
-            # Refresh document storage
-            self.document_storage = self._get_stored_documents()
-            
-            st.success(f"Document {uploaded_file.name} saved successfully!")
-            return file_path
-        except Exception as e:
-            st.error(f"Error saving document: {e}")
-            return None
-    
-    def extract_text(self, file_path):
-        """Extract text from PDF with robust error handling"""
-        try:
-            with open(file_path, 'rb') as file:
-                reader = PyPDF2.PdfReader(file)
-                text = ' '.join([
-                    page.extract_text() for page in reader.pages 
-                    if page.extract_text()
-                ])
-            return self.preprocess_text(text)
-        except Exception as e:
-            st.error(f"Error extracting PDF text: {e}")
-            return ""
-    
-    def preprocess_text(self, text):
-        """Clean and prepare text for analysis"""
-        # Remove extra whitespaces
-        text = re.sub(r'\s+', ' ', text)
-        
-        # Remove page numbers
-        text = re.sub(r'\b\d+\b', '', text)
-        
-        # Remove headers/footers (optional)
-        text = re.sub(r'^.*\n', '', text)
-        
-        return text.strip()
-    
-    def split_into_sections(self, text):
-        """Split text into meaningful sections"""
-        # Split by Articles or Chapters
-        sections = re.split(r'(Article\s+\d+:|Chapter\s+\d+:)', text)
-        
-        # Clean and filter sections
-        cleaned_sections = []
-        for i in range(1, len(sections), 2):
-            if i+1 < len(sections):
-                section = {
-                    'title': sections[i].strip(),
-                    'content': sections[i+1].strip()
-                }
-                cleaned_sections.append(section)
-        
-        return cleaned_sections
-    
-    def find_most_relevant_section(self, query, sections):
-        """Advanced semantic search with contextual understanding"""
-        try:
-            # Encode query
-            query_embedding = self.model.encode(query)
-            
-            # Score sections
-            section_scores = []
-            for section in sections:
-                # Combine title and content for embedding
-                full_text = f"{section['title']} {section['content']}"
-                section_embedding = self.model.encode(full_text)
-                
-                # Calculate similarity
-                similarity = np.dot(query_embedding, section_embedding) / (
-                    np.linalg.norm(query_embedding) * np.linalg.norm(section_embedding)
-                )
-                
-                section_scores.append({
-                    'section': section,
-                    'score': similarity
-                })
-            
-            # Sort and get top matching section
-            top_section = max(section_scores, key=lambda x: x['score'])
-            
-            # Generate detailed response
-            response = self._generate_comprehensive_response(
-                query, 
-                top_section['section'], 
-                top_section['score']
-            )
-            
-            return response
-        
-        except Exception as e:
-            st.error(f"Relevance search error: {e}")
-            return "Unable to process the query."
-    
-    def _generate_comprehensive_response(self, query, section, relevance_score):
-        """Generate a scholarly, context-rich response"""
-        response = f"**Contextual Legal Analysis**\n\n"
-        response += f"**Section:** {section['title']}\n\n"
-        response += f"**Relevance Score:** {relevance_score:.2%}\n\n"
-        response += f"**Key Insights:**\n{section['content'][:1000]}...\n\n"
-        response += "**Legal Interpretation:**\n"
-        response += "This section provides critical insights into the legal framework, "
-        response += "highlighting the nuanced interpretations and regulatory mechanisms "
-        response += "within the Saudi Arabian legal system.\n"
-        
-        return response
-    
-    def translate_response(self, response, target_language):
-        """Translate response if needed"""
-        if target_language.lower() == 'arabic':
-            try:
-                translator = GoogleTranslator(source='auto', target='ar')
-                return translator.translate(response)
-            except Exception as e:
-                st.error(f"Translation error: {e}")
-                return response
-        return response
+# Read API Key from Streamlit Secrets
+PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
+PINECONE_ENV = st.secrets.get("PINECONE_ENV", "us-east-1")  # Default to us-east-1
 
-def main():
-    # Streamlit page configuration
-    st.set_page_config(
-        page_title="Saudi Legal HelpDesk", 
-        page_icon="⚖️", 
-        layout="wide"
+# Initialize Pinecone
+pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
+index_name = "helpdesk"
+
+# Ensure the index exists
+if index_name not in pc.list_indexes().names():
+    print("⚠️ Index does not exist. Creating index...")
+    pc.create_index(
+        name=index_name,
+        dimension=1536,  
+        metric="cosine"
     )
-    
-    # Custom CSS for enhanced styling
-    st.markdown("""
-    <style>
-    .main-title {
-        font-size: 2.5rem;
-        color: #2C3E50;
-        text-align: center;
-        margin-bottom: 20px;
-    }
-    .section-header {
-        color: #34495E;
-        border-bottom: 2px solid #3498DB;
-        padding-bottom: 10px;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-    
-    # Title
-    st.markdown("<h1 class='main-title'>🏛️ AI-Powered Legal HelpDesk for Saudi Arabia</h1>", unsafe_allow_html=True)
-    
-    # Initialize helpdesk
-    helpdesk = SaudiLegalHelpDesk()
-    
-    # Main layout
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        st.markdown("<h2 class='section-header'>📄 Document Source</h2>", unsafe_allow_html=True)
+
+# Wait for index to be ready
+time.sleep(5)
+
+index = pc.Index(index_name)
+print("✅ Pinecone Index Ready:", index.describe_index_stats())
+
+# Load Sentence Transformer model for embeddings
+embedder = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+
+# Function to extract structured chapters from PDF
+def process_pdf(pdf_path):
+    with open(pdf_path, "rb") as file:
+        reader = PyPDF2.PdfReader(file)
+        text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+
+    print("📌 Extracted PDF Text (Preview):", text[:500])  # Show first 500 characters
+
+    # Split into chapters/articles
+    chapters = re.split(r'(CHAPTER\s+ONE:\s+GENERAL\s+PRINCIPLES|CHAPTER\s+\d+|ARTICLE\s+\d+)', text, flags=re.IGNORECASE)
+    structured_data = {}
+
+    for i in range(1, len(chapters), 2):
+        chapter_title = chapters[i].strip()
+        chapter_content = chapters[i + 1].strip() if i + 1 < len(chapters) else ""
         
-        # PDF Source Selection
-        source_type = st.radio(
-            "Choose Document Source", 
-            ["Upload New Document", "Use Existing Document"], 
-            horizontal=True
+        print(f"📌 Extracted: {chapter_title} -> {len(chapter_content)} characters")  # Debugging
+
+        structured_data[chapter_title] = chapter_content
+
+    return structured_data
+
+# Function to store extracted chapters in Pinecone
+def store_vectors(structured_data, pdf_name):
+    existing_pdfs = [metadata["pdf_name"] for metadata in index.describe_index_stats().get("namespaces", {}).values()]
+    
+    if pdf_name in existing_pdfs:
+        print(f"⚠️ {pdf_name} already exists in Pinecone. Skipping storage.")
+        return
+    
+    for title, content in structured_data.items():
+        vector = embedder.encode(content).tolist()
+
+        metadata = {
+            "pdf_name": pdf_name,
+            "chapter": title,  
+            "text": content
+        }
+
+        print(f"📌 Storing: {title} in Pinecone with {len(vector)} dimensions")
+        index.upsert([(f"{pdf_name}-{title}", vector, metadata)])
+
+# Function to check if Pinecone is storing data properly
+def debug_pinecone_storage():
+    print("📌 Checking Pinecone stored data...")
+    
+    try:
+        index_stats = index.describe_index_stats()
+        print("📌 Index Stats:", index_stats)
+
+        if index_stats["total_vector_count"] == 0:
+            print("⚠️ No data found in Pinecone. Ensure PDF is processed and stored correctly.")
+            return
+
+        results = index.query(
+            vector=embedder.encode("test query").tolist(),  # Use a real query
+            top_k=5,
+            include_metadata=True
         )
-        
-        # Document Selection Logic
-        if source_type == "Upload New Document":
-            uploaded_file = st.file_uploader(
-                "Upload PDF", 
-                type=['pdf'], 
-                help="Upload a legal document in PDF format"
-            )
-            
-            if uploaded_file:
-                # Save uploaded document
-                file_path = helpdesk.save_uploaded_document(uploaded_file)
-        else:
-            file_path = os.path.join(
-                helpdesk.storage_dir, 
-                st.selectbox("Select Document", helpdesk.document_storage)
-            )
-    
-    with col2:
-        st.markdown("<h2 class='section-header'>🌐 Language Settings</h2>", unsafe_allow_html=True)
-        
-        # Language Selection
-        input_lang = st.radio("Input Language", ["English", "Arabic"])
-        response_lang = st.radio("Response Language", ["English", "Arabic"])
-    
-    # Query Interface
-    st.markdown("<h2 class='section-header'>❓ Ask Your Legal Question</h2>", unsafe_allow_html=True)
-    
-    query = st.text_input(
-        f"Enter your legal query in {input_lang}", 
-        placeholder="Type your legal question here..."
-    )
-    
-    # Search Button
-    if st.button("Analyze Document", type="primary"):
-        if 'file_path' in locals() and file_path and query:
-            try:
-                # Extract full text
-                full_text = helpdesk.extract_text(file_path)
-                
-                # Split into sections
-                document_sections = helpdesk.split_into_sections(full_text)
-                
-                # Find most relevant section
-                response = helpdesk.find_most_relevant_section(query, document_sections)
-                
-                # Translate if needed
-                final_response = helpdesk.translate_response(response, response_lang)
-                
-                # Display response
-                st.markdown("### 📋 Analysis Result")
-                st.markdown(final_response)
-            
-            except Exception as e:
-                st.error(f"Analysis failed: {e}")
-        else:
-            st.warning("Please upload/select a document and enter a query.")
 
-if __name__ == "__main__":
-    main()
+        print("📌 Sample stored data:", results)
+    except Exception as e:
+        print("⚠️ Pinecone Query Failed:", str(e))
+
+# Function to query Pinecone and retrieve the exact chapter
+def query_vectors(query, selected_pdf):
+    match = re.search(r'(CHAPTER\s+ONE:\s+GENERAL\s+PRINCIPLES|CHAPTER\s+\d+|ARTICLE\s+\d+)', query, re.IGNORECASE)
+    requested_section = match.group(1).upper() if match else None
+
+    print(f"🔍 Requested Section: {requested_section}")  # Debugging
+
+    vector = embedder.encode(query).tolist()
+    
+    results = index.query(
+        vector=vector, 
+        top_k=5, 
+        include_metadata=True, 
+        filter={"pdf_name": {"$eq": selected_pdf}}
+    )
+
+    print("📌 Pinecone Query Results:", results)
+
+    if not results["matches"]:
+        return "⚠️ No relevant information found in the selected document."
+
+    for match in results["matches"]:
+        stored_chapter = match["metadata"].get("chapter", "")
+        stored_text = match["metadata"].get("text", "")
+
+        print(f"📌 Found stored chapter: {stored_chapter}")  # Debugging
+        print(f"📌 Stored text preview: {stored_text[:200]}")  # Show first 200 characters
+
+        if requested_section and requested_section in stored_chapter:
+            return f"**Extracted Answer from {requested_section}:**\n\n{stored_text}"
+
+    return "⚠️ Requested section not found in the document."
+
+# Streamlit UI
+st.markdown("<h1 style='text-align: center;'>📜 AI-Powered Legal HelpDesk</h1>", unsafe_allow_html=True)
+
+# Option to choose existing PDFs or upload new one
+action = st.radio("Choose an action:", ["Use existing PDFs", "Upload a new PDF"])
+
+if action == "Upload a new PDF":
+    uploaded_file = st.file_uploader("📂 Upload a PDF", type=["pdf"])
+    if uploaded_file:
+        temp_pdf_path = f"temp_{uploaded_file.name}"
+        with open(temp_pdf_path, "wb") as f:
+            f.write(uploaded_file.read())
+
+        structured_data = process_pdf(temp_pdf_path)
+        store_vectors(structured_data, uploaded_file.name)
+        st.success("✅ PDF uploaded and processed!")
+
+        # Debugging: Check what was stored
+        debug_pinecone_storage()
+
+# Retrieve available PDFs in Pinecone
+index_stats = index.describe_index_stats()
+existing_pdfs = list(index_stats.get("namespaces", {}).keys())
+
+# Select from existing PDFs
+if existing_pdfs:
+    selected_pdf = st.selectbox("📖 Select PDF for Query", existing_pdfs)
+else:
+    selected_pdf = None
+    st.warning("⚠️ No PDFs found in Pinecone. Please upload a PDF.")
+
+# Language selection
+input_lang = st.radio("🌍 Choose Input Language", ["English", "Arabic"], index=0)
+response_lang = st.radio("🌍 Choose Response Language", ["English", "Arabic"], index=0)
+
+# User query input
+query = st.text_input("🔎 Ask a question (e.g., 'Chapter One: General Principles'):" if input_lang == "English" else "📝 اسأل سؤالاً (مثل 'الفصل الأول: المبادئ العامة'): ")
+
+if st.button("🔍 Get Answer"):
+    if selected_pdf and query:
+        # Translate query to English for processing
+        detected_lang = GoogleTranslator(source="auto", target="en").translate(query)
+        response = query_vectors(detected_lang, selected_pdf)
+
+        # Translate response if needed
+        if response_lang == "Arabic":
+            response = GoogleTranslator(source="en", target="ar").translate(response)
+            st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
+        else:
+            st.markdown(f"<div style='white-space: pre-wrap; font-family: Arial;'>{response}</div>", unsafe_allow_html=True)
+    else:
+        st.warning("⚠️ Please enter a query and select a PDF.")
