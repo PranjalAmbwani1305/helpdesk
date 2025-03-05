@@ -9,21 +9,12 @@ from sentence_transformers import SentenceTransformer
 
 # Read API Key from Streamlit Secrets
 PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
+PINECONE_ENV = st.secrets.get("PINECONE_ENV", "us-east-1")  # Default to us-east-1
 
 # Initialize Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
-# Ensure the index exists
-if index_name not in pc.list_indexes().names():
-    print("⚠️ Index does not exist. Creating index...")
-    pc.create_index(
-        name=index_name,
-        dimension=1536,  
-        metric="cosine"
-    )
-
-time.sleep(5)
 index = pc.Index(index_name)
 print("✅ Pinecone Index Ready:", index.describe_index_stats())
 
@@ -68,13 +59,19 @@ def get_existing_pdfs():
 def store_vectors(structured_data, pdf_name):
     existing_pdfs = get_existing_pdfs()
 
+    # Skip if PDF already exists
     if pdf_name in existing_pdfs:
         print(f"⚠️ {pdf_name} already exists in Pinecone. Skipping storage.")
         return
     
     for title, content in structured_data.items():
         vector = embedder.encode(content).tolist()
-        metadata = {"pdf_name": pdf_name, "chapter": title, "text": content}
+
+        metadata = {
+            "pdf_name": pdf_name,
+            "chapter": title,  
+            "text": content
+        }
 
         print(f"📌 Storing: {title} in Pinecone with {len(vector)} dimensions")
         index.upsert([(f"{pdf_name}-{title}", vector, metadata)])
@@ -82,6 +79,7 @@ def store_vectors(structured_data, pdf_name):
 # Function to check if Pinecone is storing data properly
 def debug_pinecone_storage():
     print("📌 Checking Pinecone stored data...")
+    
     try:
         index_stats = index.describe_index_stats()
         print("📌 Index Stats:", index_stats)
@@ -91,7 +89,7 @@ def debug_pinecone_storage():
             return
 
         results = index.query(
-            vector=embedder.encode("test query").tolist(),
+            vector=embedder.encode("test query").tolist(),  # Use a real query
             top_k=5,
             include_metadata=True
         )
@@ -108,7 +106,13 @@ def query_vectors(query, selected_pdf):
     print(f"🔍 Requested Section: {requested_section}")  # Debugging
 
     vector = embedder.encode(query).tolist()
-    results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
+    
+    results = index.query(
+        vector=vector, 
+        top_k=5, 
+        include_metadata=True, 
+        filter={"pdf_name": {"$eq": selected_pdf}}
+    )
 
     print("📌 Pinecone Query Results:", results)
 
@@ -120,7 +124,7 @@ def query_vectors(query, selected_pdf):
         stored_text = match["metadata"].get("text", "")
 
         print(f"📌 Found stored chapter: {stored_chapter}")  # Debugging
-        print(f"📌 Stored text preview: {stored_text[:200]}")
+        print(f"📌 Stored text preview: {stored_text[:200]}")  # Show first 200 characters
 
         if requested_section and requested_section in stored_chapter:
             return f"**Extracted Answer from {requested_section}:**\n\n{stored_text}"
@@ -143,10 +147,14 @@ if action == "Upload a new PDF":
         structured_data = process_pdf(temp_pdf_path)
         store_vectors(structured_data, uploaded_file.name)
         st.success("✅ PDF uploaded and processed!")
+
+        # Debugging: Check what was stored
         debug_pinecone_storage()
 
+# Retrieve available PDFs in Pinecone
 existing_pdfs = get_existing_pdfs()
 
+# Select from existing PDFs
 if existing_pdfs:
     selected_pdf = st.selectbox("📖 Select PDF for Query", list(existing_pdfs))
 else:
