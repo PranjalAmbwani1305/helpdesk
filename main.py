@@ -157,6 +157,3 @@ existing_pdfs = get_existing_pdfs()
 # Select from existing PDFs
 if existing_pdfs:
     selected_pdf = st.selectbox("📖 Select PDF for Query", list(existing_pdfs))
-else:
-    selected_pdf = None
-    st.warning("⚠️ No PDFs found in Pinecone. Please upload a PDF.")
