@@ -15,6 +15,18 @@ PINECONE_ENV = st.secrets.get("PINECONE_ENV", "us-east-1")  # Default to us-east
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
+# Ensure the index exists
+if index_name not in pc.list_indexes().names():
+    print("⚠️ Index does not exist. Creating index...")
+    pc.create_index(
+        name=index_name,
+        dimension=1536,  
+        metric="cosine"
+    )
+
+# Wait for index to be ready
+time.sleep(10)
+
 index = pc.Index(index_name)
 print("✅ Pinecone Index Ready:", index.describe_index_stats())
 
@@ -29,8 +41,8 @@ def process_pdf(pdf_path):
 
     print("📌 Extracted PDF Text (Preview):", text[:500])  # Show first 500 characters
 
-    # Improved Regex: Supports "CHAPTER X", "ARTICLE X", and other legal formats
-    chapters = re.split(r'(CHAPTER\s+\d+|ARTICLE\s+\d+)', text, flags=re.IGNORECASE)
+    # Improved Regex: Supports "CHAPTER ONE: GENERAL PRINCIPLES" and other formats
+    chapters = re.split(r'(CHAPTER\s+ONE:\s+GENERAL\s+PRINCIPLES|CHAPTER\s+\d+|ARTICLE\s+\d+)', text, flags=re.IGNORECASE)
     structured_data = {}
 
     for i in range(1, len(chapters), 2):
@@ -66,11 +78,11 @@ def debug_pinecone_storage():
         print("📌 Index Stats:", index_stats)
 
         if index_stats["total_vector_count"] == 0:
-            print("⚠️ No data found in the index. Ensure data is stored first.")
+            print("⚠️ No data found in Pinecone. Ensure PDF is processed and stored correctly.")
             return
 
         results = index.query(
-            vector=embedder.encode("test query").tolist(),  # Use a real vector
+            vector=embedder.encode("test query").tolist(),  # Use a real query
             top_k=5,
             include_metadata=True
         )
@@ -81,8 +93,8 @@ def debug_pinecone_storage():
 
 # Function to query Pinecone and retrieve the exact chapter
 def query_vectors(query, selected_pdf):
-    match = re.search(r'(CHAPTER|ARTICLE)\s+(\d+)', query, re.IGNORECASE)
-    requested_section = f"{match.group(1).upper()} {match.group(2)}" if match else None
+    match = re.search(r'(CHAPTER\s+ONE:\s+GENERAL\s+PRINCIPLES|CHAPTER\s+\d+|ARTICLE\s+\d+)', query, re.IGNORECASE)
+    requested_section = match.group(1).upper() if match else None
 
     print(f"🔍 Requested Section: {requested_section}")  # Debugging
 
@@ -138,7 +150,7 @@ input_lang = st.radio("🌍 Choose Input Language", ["English", "Arabic"], index
 response_lang = st.radio("🌍 Choose Response Language", ["English", "Arabic"], index=0)
 
 # User query input
-query = st.text_input("🔎 Ask a question (e.g., 'Chapter 5'):" if input_lang == "English" else "📝 اسأل سؤالاً (مثل 'الفصل 5'): ")
+query = st.text_input("🔎 Ask a question (e.g., 'Chapter One: General Principles'):" if input_lang == "English" else "📝 اسأل سؤالاً (مثل 'الفصل الأول: المبادئ العامة'): ")
 
 if st.button("🔍 Get Answer"):
     if selected_pdf and query:
