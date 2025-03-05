@@ -2,10 +2,11 @@ import streamlit as st
 import PyPDF2
 import pinecone
 import numpy as np
-from deep_translator import GoogleTranslator
-from transformers import pipeline
+import requests
+import json
 
-# Initialize Pinecone
+
+# Pinecone API Initialization
 PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
 PINECONE_ENV = st.secrets["PINECONE_ENV"]
 
@@ -13,8 +14,16 @@ pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 index = pc.Index(index_name)
 
-# Hugging Face Embedding Model
-embedding_model = pipeline("feature-extraction", model="sentence-transformers/all-MiniLM-L6-v2")
+# Hugging Face Model Endpoints
+EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+TRANSLATION_MODEL = "Helsinki-NLP/opus-mt-en-ar"
+
+# Function to call Hugging Face Inference API
+def hf_request(payload, model):
+    headers = {"Authorization": f"Bearer {HF_API_KEY}"}
+    API_URL = f"https://api-inference.huggingface.co/models/{model}"
+    response = requests.post(API_URL, headers=headers, json=payload)
+    return response.json()
 
 # Function to Process PDF into Chunks
 def process_pdf(pdf_path, chunk_size=500):
@@ -28,45 +37,34 @@ def process_pdf(pdf_path, chunk_size=500):
 # Store Vectors in Pinecone
 def store_vectors(chunks, pdf_name):
     for i, chunk in enumerate(chunks):
-        vector = np.array(embedding_model(chunk)).mean(axis=0).tolist()  # Ensure correct embedding format
-        index.upsert([(f"{pdf_name}-doc-{i}", vector, {"pdf_name": pdf_name, "text": chunk})])
+        embedding_response = hf_request({"inputs": chunk}, EMBEDDING_MODEL)
+        if isinstance(embedding_response, list):  # Ensure valid format
+            vector = np.array(embedding_response[0]).mean(axis=0).tolist()
+            index.upsert([(f"{pdf_name}-doc-{i}", vector, {"pdf_name": pdf_name, "text": chunk})])
 
-# Query Pinecone for Answers (Updated)
+# Query Pinecone for Answers
 def query_vectors(query, selected_pdf):
-    embeddings = embedding_model(query)
+    embedding_response = hf_request({"inputs": query}, EMBEDDING_MODEL)
+    if not isinstance(embedding_response, list):
+        return "Error: Embedding request failed."
 
-    # Ensure query embedding is correctly formatted
-    if isinstance(embeddings, list):
-        embeddings = np.array(embeddings[0])  
-    else:
-        embeddings = np.array(embeddings)
+    query_vector = np.array(embedding_response[0]).mean(axis=0).tolist()
+    results = index.query(vector=query_vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
 
-    if embeddings.ndim > 1:
-        embeddings = embeddings.mean(axis=0)
-
-    vector = embeddings.tolist()
-
-    # Validate vector size
-    if len(vector) != 384:
-        st.error(f"Error: Query embedding size mismatch ({len(vector)} instead of 384).")
-        return "Embedding size mismatch. Please try again."
-
-    results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
-    
     if results.matches:
         matched_texts = [match.metadata["text"] for match in results.matches]
-
-        # Clean up response
         response_text = "\n\n".join(matched_texts)
         response_text = response_text.replace("Article ", "\n\n**Article ").strip()
-
         return response_text
     else:
         return "No relevant information found."
 
-# Translate Text
-def translate_text(text, target_language):
-    return GoogleTranslator(source="auto", target=target_language).translate(text)
+# Translate Text using Hugging Face
+def translate_text(text, target_language="ar"):
+    translation_response = hf_request({"inputs": text}, TRANSLATION_MODEL)
+    if isinstance(translation_response, list):
+        return translation_response[0]["translation_text"]
+    return text  # Return original text if translation fails
 
 # Streamlit UI
 st.markdown(
@@ -102,7 +100,7 @@ else:
 # Get Answer
 if st.button("Get Answer"):
     if uploaded_file and query:
-        detected_lang = GoogleTranslator(source="auto", target="en").translate(query)
+        detected_lang = translate_text(query, "en") if input_lang == "Arabic" else query
         response = query_vectors(detected_lang, selected_pdf)
 
         if response_lang == "Arabic":
