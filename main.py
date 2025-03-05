@@ -19,7 +19,7 @@ def initialize_pinecone():
         pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
         
         # Use a more robust index name
-        index_name = "legal-helpdesk-index"
+        index_name = "helpdesk"
 
         # Check and create index with error handling
         try:
