@@ -14,12 +14,12 @@ from langchain.document_loaders import PyPDFLoader
 from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.vectorstores import Pinecone
 from langchain.chains import RetrievalQA
-from langchain.llms import OpenAI
+from langchain.llms import HuggingFaceHub
 
 # === Initialize Pinecone === #
 PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
 PINECONE_ENV = st.secrets.get("PINECONE_ENV", "us-east-1")
-OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
+HUGGINGFACE_API_KEY = st.secrets["HUGGINGFACE_API_KEY"]
 
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
@@ -76,7 +76,7 @@ def main():
         # Initialize LangChain QA system
         retriever = index.as_retriever()
         qa_chain = RetrievalQA.from_chain_type(
-            llm=OpenAI(api_key=OPENAI_API_KEY),
+            llm=HuggingFaceHub(repo_id="mistralai/Mistral-7B-Instruct", model_kwargs={"temperature": 0.7, "max_length": 512}, huggingfacehub_api_token=HUGGINGFACE_API_KEY),
             retriever=retriever
         )
 
