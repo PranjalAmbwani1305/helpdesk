@@ -2,13 +2,9 @@ import streamlit as st
 import PyPDF2
 import pinecone
 import numpy as np
-import nltk
-from nltk.tokenize import sent_tokenize
+import re
 from deep_translator import GoogleTranslator
 from transformers import pipeline
-
-# Download NLTK data for sentence tokenization
-nltk.download("punkt")
 
 # Initialize Pinecone
 PINECONE_API_KEY = st.secrets["PINECONE_API_KEY"]
@@ -18,75 +14,51 @@ pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 index = pc.Index(index_name)
 
-# Hugging Face Embedding Model (No OpenAI)
+# Hugging Face Embedding Model
 embedding_model = pipeline("feature-extraction", model="sentence-transformers/all-MiniLM-L6-v2")
 
-# Function to Process PDF into Smart Chunks
+# Function to Process PDF into Chunks (without nltk)
 def process_pdf(pdf_path, chunk_size=500):
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
         text = " ".join([page.extract_text() for page in reader.pages if page.extract_text()])
 
-    sentences = sent_tokenize(text)  # Split into sentences
-    chunks, current_chunk = [], ""
+    # Split text into sentences using regex
+    sentences = re.split(r'(?<=[.?!])\s+', text)
+
+    # Group sentences into chunks
+    chunks = []
+    current_chunk = ""
 
     for sentence in sentences:
         if len(current_chunk) + len(sentence) <= chunk_size:
-            current_chunk += " " + sentence  # Add sentence if within limit
+            current_chunk += " " + sentence
         else:
-            chunks.append(current_chunk.strip())  # Save full chunk
-            current_chunk = sentence  # Start a new chunk
-    
-    if current_chunk:
-        chunks.append(current_chunk.strip())  # Add last chunk
+            chunks.append(current_chunk.strip())
+            current_chunk = sentence
+
+    if current_chunk:  # Add the last chunk if not empty
+        chunks.append(current_chunk.strip())
 
     return chunks
 
 # Store Vectors in Pinecone
 def store_vectors(chunks, pdf_name):
     for i, chunk in enumerate(chunks):
-        embeddings = embedding_model(chunk)
-
-        # Ensure correct embedding format
-        if isinstance(embeddings, list):
-            embeddings = np.array(embeddings[0])
-        else:
-            embeddings = np.array(embeddings)
-
-        if embeddings.ndim > 1:
-            embeddings = embeddings.mean(axis=0)
-
-        vector = embeddings.tolist()
-
+        vector = np.array(embedding_model(chunk)).mean(axis=0).tolist()  # Ensure correct embedding format
         index.upsert([(f"{pdf_name}-doc-{i}", vector, {"pdf_name": pdf_name, "text": chunk})])
 
 # Query Pinecone for Answers
 def query_vectors(query, selected_pdf):
-    embeddings = embedding_model(query)
-
-    # Ensure correct format
-    if isinstance(embeddings, list):
-        embeddings = np.array(embeddings[0])
-    else:
-        embeddings = np.array(embeddings)
-
-    if embeddings.ndim > 1:
-        embeddings = embeddings.mean(axis=0)
-
-    vector = embeddings.tolist()
-
+    vector = np.array(embedding_model(query)).mean(axis=0).tolist()
     results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
-    
+
     if results.matches:
         matched_texts = [match.metadata["text"] for match in results.matches]
-
-        # Format response correctly
-        response_text = "\n\n".join(matched_texts)
-        response_text = response_text.replace("Article ", "\n\n**Article ").strip()
-
-        return response_text
+        combined_text = "\n\n".join(matched_texts)
+        return combined_text
     else:
-        return "No relevant information found."
+        return "No relevant information found in the selected document."
 
 # Translate Text
 def translate_text(text, target_language):
