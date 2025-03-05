@@ -23,11 +23,6 @@ PINECONE_ENV = st.secrets.get("PINECONE_ENV", "us-east-1")
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
-if index_name not in pc.list_indexes().names():
-    print("⚠️ Index does not exist. Creating index...")
-    pc.create_index(name=index_name, dimension=1536, metric="cosine")
-
-time.sleep(5)
 index = pc.Index(index_name)
 print("✅ Pinecone Index Ready:", index.describe_index_stats())
 
@@ -139,8 +134,8 @@ def main():
     st.set_page_config(page_title="Saudi Legal HelpDesk", page_icon="⚖️")
 
     st.title("🏛️ AI-Powered Legal HelpDesk for Saudi Arabia")
-    
-    # Initialize document storage
+
+    # Ensure document storage exists
     storage_dir = "document_storage"
     os.makedirs(storage_dir, exist_ok=True)
 
@@ -160,14 +155,14 @@ def main():
             structured_data = split_into_sections(full_text)
             store_vectors(structured_data, uploaded_file.name)
 
-    # Retrieve available PDFs
+    # Retrieve available PDFs from Pinecone
     existing_pdfs = get_existing_pdfs()
 
     if existing_pdfs:
-        selected_pdf = st.selectbox("📖 Select PDF for Query", list(existing_pdfs))
+        selected_pdf = st.selectbox("📖 Select PDF for Query", list(existing_pdfs), index=0)
     else:
         selected_pdf = None
-        st.warning("⚠️ No PDFs found in Pinecone. Please upload a PDF.")
+        st.warning("⚠️ No PDFs found in Pinecone. Please upload a PDF first.")
 
     # Language selection
     input_lang = st.radio("🌍 Choose Input Language", ["English", "Arabic"], index=0)
@@ -177,28 +172,33 @@ def main():
     query = st.text_input("🔎 Ask a legal question:")
 
     if st.button("🔍 Get Answer"):
-        if selected_pdf and query:
-            # Retrieve text from Pinecone
-            results = index.query(
-                vector=embedder.encode(query).tolist(), 
-                top_k=5, 
-                include_metadata=True, 
-                filter={"pdf_name": {"$eq": selected_pdf}}
-            )
+        if not selected_pdf:
+            st.warning("⚠️ Please select a PDF before asking a question.")
+            return
+        
+        if not query.strip():
+            st.warning("⚠️ Please enter a valid query.")
+            return
 
-            if results["matches"]:
-                response = results["matches"][0]["metadata"]["text"]
-            else:
-                response = "⚠️ No relevant information found in the selected document."
+        # Retrieve text from Pinecone
+        results = index.query(
+            vector=embedder.encode(query).tolist(), 
+            top_k=5, 
+            include_metadata=True, 
+            filter={"pdf_name": {"$eq": selected_pdf}}
+        )
 
-            # Translate response if needed
-            if response_lang == "Arabic":
-                response = translate_response(response, "ar")
-                st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
-            else:
-                st.write(f"**Answer:** {response}")
+        if results["matches"]:
+            response = results["matches"][0]["metadata"]["text"]
         else:
-            st.warning("⚠️ Please enter a query and select a PDF.")
+            response = "⚠️ No relevant information found in the selected document."
+
+        # Translate response if needed
+        if response_lang == "Arabic":
+            response = translate_response(response, "ar")
+            st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
+        else:
+            st.write(f"**Answer:** {response}")
 
 if __name__ == "__main__":
     main()
