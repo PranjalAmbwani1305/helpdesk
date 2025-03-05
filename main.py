@@ -14,10 +14,10 @@ embed_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
 
-# Initialize Pinecone
-pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
+pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
+
 index_name = "helpdesk"
-index = pinecone.Index(index_name)
+index = pc.Index(index_name)
 
 # Function to extract text and chunk it based on Chapters and Articles
 def process_pdf(pdf_path):
