@@ -15,6 +15,17 @@ PINECONE_ENV = st.secrets.get("PINECONE_ENV", "us-east-1")  # Default to us-east
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
+# Ensure the index exists
+if index_name not in pc.list_indexes().names():
+    print("⚠️ Index does not exist. Creating index...")
+    pc.create_index(
+        name=index_name,
+        dimension=1536,  
+        metric="cosine"
+    )
+
+# Wait for index to be ready
+time.sleep(5)
 
 index = pc.Index(index_name)
 print("✅ Pinecone Index Ready:", index.describe_index_stats())
@@ -48,15 +59,9 @@ def process_pdf(pdf_path):
 def get_existing_pdfs():
     existing_pdfs = set()
     try:
-        results = index.query(
-            vector=[0]*1536,  # Use a zero vector for a dummy query
-            top_k=1000,  # Retrieve many results
-            include_metadata=True
-        )
+        results = index.query(vector=[0]*1536, top_k=1, include_metadata=True)
         for match in results["matches"]:
-            pdf_name = match["metadata"].get("pdf_name", "")
-            if pdf_name:
-                existing_pdfs.add(pdf_name)
+            existing_pdfs.add(match["metadata"].get("pdf_name", ""))
     except Exception as e:
         print("⚠️ Error checking existing PDFs:", e)
     
