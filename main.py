@@ -19,26 +19,33 @@ embedding_model = pipeline("feature-extraction", model="sentence-transformers/al
 def process_pdf(pdf_path, chunk_size=500):
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
-        text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
-    
-    chunks = [text[i:i+chunk_size].strip() for i in range(0, len(text), chunk_size)]  # Ensuring words are not split
+        text = " ".join([page.extract_text() for page in reader.pages if page.extract_text()])
+
+    chunks = []
+    words = text.split()  # Ensure words are not split mid-way
+    for i in range(0, len(words), chunk_size):
+        chunk = " ".join(words[i : i + chunk_size])
+        chunks.append(chunk.strip())
     return chunks
 
 # Store Vectors in Pinecone
 def store_vectors(chunks, pdf_name):
     for i, chunk in enumerate(chunks):
-        vector = embedding_model(chunk)[0]  # Correct embedding extraction
+        vector = embedding_model(chunk)
+        vector = vector[0] if isinstance(vector, list) else vector  # Ensure correct format
+        vector = vector.tolist()  # Convert to list of floats
         index.upsert([(f"{pdf_name}-doc-{i}", vector, {"pdf_name": pdf_name, "text": chunk})])
 
 # Query Pinecone for Answers
 def query_vectors(query, selected_pdf):
-    vector = embedding_model(query)[0]
+    vector = embedding_model(query)
+    vector = vector[0] if isinstance(vector, list) else vector  # Ensure correct format
+    vector = vector.tolist()  # Convert to list of floats
     results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
 
     if results.matches:
         matched_texts = [match.metadata["text"] for match in results.matches]
-        combined_text = "\n\n".join(matched_texts)
-        return combined_text
+        return "\n\n".join(matched_texts)
     else:
         return "No relevant information found in the selected document."
 
