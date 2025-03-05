@@ -31,12 +31,15 @@ def process_pdf(pdf_path, chunk_size=500):
     current_title = None
     current_content = []
 
+    # Refined regex to detect articles like "Article 1: Title" or "Article One: Title"
+    article_pattern = r'^(Article \d+|Article [A-Za-z]+):.*$'
+
     # Split text into paragraphs or sections
     paragraphs = text.split('\n')
 
     for para in paragraphs:
-        # Check if the paragraph looks like a title (you can adjust this regex to suit your needs)
-        if re.match(r'^[A-Z][A-Za-z0-9\s]+$', para.strip()):  # Adjust regex for title pattern
+        # Check if the paragraph looks like an article title
+        if re.match(article_pattern, para.strip()):
             if current_title:
                 sections.append({'title': current_title, 'content': ' '.join(current_content)})
             current_title = para.strip()  # Set new title
