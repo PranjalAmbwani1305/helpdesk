@@ -15,8 +15,6 @@ PINECONE_ENV = st.secrets.get("PINECONE_ENV", "us-east-1")
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
-
-time.sleep(5)
 index = pc.Index(index_name)
 print("✅ Pinecone Index Ready:", index.describe_index_stats())
 
