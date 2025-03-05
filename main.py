@@ -23,6 +23,11 @@ PINECONE_ENV = st.secrets.get("PINECONE_ENV", "us-east-1")
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
+if index_name not in pc.list_indexes().names():
+    print("⚠️ Index does not exist. Creating index...")
+    pc.create_index(name=index_name, dimension=1536, metric="cosine")
+
+time.sleep(5)
 index = pc.Index(index_name)
 print("✅ Pinecone Index Ready:", index.describe_index_stats())
 
