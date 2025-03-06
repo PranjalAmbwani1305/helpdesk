@@ -12,8 +12,7 @@ PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 index_name = "helpdesk"
 
 # Initialize Pinecone
-from pinecone import Pinecone
-pc = Pinecone(api_key=PINECONE_API_KEY)
+pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index = pc.Index(index_name)
 
 # Initialize sentence transformer model
@@ -30,28 +29,39 @@ def process_pdf(pdf_path):
         text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
     
     chapters, articles = [], []
-    current_chapter, current_chapter_content = "Uncategorized", []
-    current_article, current_article_content = None, []
+    current_chapter, current_chapter_number, current_chapter_content = "Uncategorized", None, []
+    current_article, current_article_number, current_article_content = None, None, []
 
     paragraphs = text.split('\n')
 
     for para in paragraphs:
         para = para.strip()
 
-        # Detect Chapters (e.g., "Chapter One: General Principles")
+        # Detect Chapters (e.g., "Chapter 3: General Principles")
         chapter_match = re.match(chapter_pattern, para)
         if chapter_match:
             if current_chapter != "Uncategorized":
-                chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
+                chapters.append({
+                    'title': current_chapter,
+                    'chapter_number': current_chapter_number,
+                    'content': ' '.join(current_chapter_content)
+                })
             current_chapter = para
+            current_chapter_number = chapter_match.group(2)  # Store chapter number
             current_chapter_content = []
         
-        # Detect Articles (e.g., "Article 1:")
+        # Detect Articles (e.g., "Article 1: Rights of Individuals")
         article_match = re.match(article_pattern, para)
         if article_match:
             if current_article:
-                articles.append({'chapter': current_chapter, 'title': current_article, 'article_number': article_match.group(2), 'content': ' '.join(current_article_content)})
+                articles.append({
+                    'chapter': current_chapter,
+                    'title': current_article,
+                    'article_number': current_article_number,
+                    'content': ' '.join(current_article_content)
+                })
             current_article = para
+            current_article_number = article_match.group(2)  # Store article number
             current_article_content = []
         
         # Add content to current section
@@ -63,9 +73,18 @@ def process_pdf(pdf_path):
 
     # Append last detected sections
     if current_article:
-        articles.append({'chapter': current_chapter, 'title': current_article, 'article_number': article_match.group(2), 'content': ' '.join(current_article_content)})
+        articles.append({
+            'chapter': current_chapter,
+            'title': current_article,
+            'article_number': current_article_number,
+            'content': ' '.join(current_article_content)
+        })
     if current_chapter and current_chapter != "Uncategorized":
-        chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
+        chapters.append({
+            'title': current_chapter,
+            'chapter_number': current_chapter_number,
+            'content': ' '.join(current_chapter_content)
+        })
 
     return chapters, articles
 
@@ -74,23 +93,40 @@ def store_vectors(chapters, articles, pdf_name):
     for i, chapter in enumerate(chapters):
         chapter_vector = model.encode(chapter['content']).tolist()
         index.upsert([
-            (f"{pdf_name}-chapter-{i}", chapter_vector, {"pdf_name": pdf_name, "text": chapter['content'], "type": "chapter", "chapter_number": re.findall(r'\d+', chapter['title'])})
+            (f"{pdf_name}-chapter-{i}", chapter_vector, {
+                "pdf_name": pdf_name,
+                "chapter_number": chapter['chapter_number'],
+                "text": chapter['content'],
+                "type": "chapter"
+            })
         ])
 
     for i, article in enumerate(articles):
         article_vector = model.encode(article['content']).tolist()
         index.upsert([
-            (f"{pdf_name}-article-{i}", article_vector, {"pdf_name": pdf_name, "chapter": article['chapter'], "text": article['content'], "type": "article", "article_number": article['article_number']})
+            (f"{pdf_name}-article-{i}", article_vector, {
+                "pdf_name": pdf_name,
+                "chapter_number": article['chapter'],
+                "article_number": article['article_number'],
+                "text": article['content'],
+                "type": "article"
+            })
         ])
 
 # Function to query vectors from Pinecone
 def query_vectors(query, selected_pdf):
     try:
         vector = model.encode(query).tolist()
-        chapter_match = re.search(r'Chapter (\d+)', query, re.IGNORECASE)
-        chapter_number_filter = {"chapter_number": {"$eq": chapter_match.group(1)}} if chapter_match else {}
+        
+        # Check if user queries a specific chapter
+        chapter_match = re.search(r'chapter\s*(\d+)', query, re.IGNORECASE)
+        filter_query = {"pdf_name": {"$eq": selected_pdf}}
+        
+        if chapter_match:
+            chapter_number = chapter_match.group(1)
+            filter_query["chapter_number"] = {"$eq": chapter_number}
 
-        results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}, **chapter_number_filter})
+        results = index.query(vector=vector, top_k=5, include_metadata=True, filter=filter_query)
         
         if results["matches"]:
             matched_texts = []
@@ -100,11 +136,11 @@ def query_vectors(query, selected_pdf):
                 section_text = match["metadata"]["text"]
                 
                 if section_type == "chapter":
-                    matched_texts.append(f"**Chapter:** {section_text}")
+                    matched_texts.append(f"**Chapter {match['metadata']['chapter_number']}:** {section_text}")
                 elif section_type == "article":
-                    chapter_name = match["metadata"].get("chapter", "Uncategorized")
+                    chapter_name = match["metadata"].get("chapter_number", "Uncategorized")
                     article_number = match["metadata"].get("article_number", "Unknown")
-                    matched_texts.append(f"**{chapter_name} - Article {article_number}**\n{section_text}")
+                    matched_texts.append(f"**Chapter {chapter_name} - Article {article_number}:**\n{section_text}")
             
             return "\n\n".join(matched_texts)
         else:
