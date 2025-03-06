@@ -9,16 +9,23 @@ from sentence_transformers import SentenceTransformer
 # Load environment variables for Pinecone API key
 load_dotenv()
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-PINECONE_ENV = os.getenv("PINECONE_ENV", "us-west1-gcp")  # Update with actual environment if needed
-
-# Initialize Pinecone
-pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
 index_name = "helpdesk"
 
-if index_name in pinecone.list_indexes():
-    index = pinecone.Index(index_name)
-else:
-    st.error("Pinecone index not found. Please create the index first.")
+# Initialize Pinecone
+pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
+
+# Check if the index exists, otherwise create it
+existing_indexes = [index_info["name"] for index_info in pc.list_indexes()]
+
+if index_name not in existing_indexes:
+    pc.create_index(
+        name=index_name,
+        dimension=384,  # Ensure this matches your embedding model output
+        metric="cosine"
+    )
+
+# Connect to the index
+index = pc.Index(index_name)
 
 # Initialize sentence transformer model
 model = SentenceTransformer("all-MiniLM-L6-v2")
@@ -31,7 +38,7 @@ article_pattern = r'^(Article (\d+|[A-Za-z]+)):.*$'
 def process_pdf(pdf_path):
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
-        text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+        text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
     
     chapters, articles = [], []
     current_chapter, current_chapter_number, current_chapter_content = "Uncategorized", None, []
@@ -66,7 +73,7 @@ def process_pdf(pdf_path):
                     'content': ' '.join(current_article_content)
                 })
             current_article = para
-            current_article_number = article_match.group(2) if article_match.group(2) else "Unknown"  # Store article number safely
+            current_article_number = article_match.group(2)  # Store article number
             current_article_content = []
         
         # Add content to current section
@@ -173,8 +180,8 @@ if pdf_source == "Upload from PC":
         store_vectors(chapters, articles, uploaded_file.name)
 
         st.success("PDF uploaded and processed successfully!")
-elif pdf_source == "Choose from Document Storage":
-    st.warning("Document Storage feature is currently unavailable.")
+else:
+    st.info("Document Storage feature is currently unavailable.")
 
 # Language Selection
 input_language = st.selectbox("Choose Input Language", ("English", "Arabic"))
