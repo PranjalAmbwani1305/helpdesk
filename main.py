@@ -7,7 +7,7 @@ from deep_translator import GoogleTranslator
 from sentence_transformers import SentenceTransformer
 
 # Initialize Pinecone
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+PINECONE_API_KEY = "YOUR_PINECONE_API_KEY"
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 index = pc.Index(index_name)
@@ -23,7 +23,7 @@ def extract_text_from_pdf(pdf_path):
     """Extracts and structures text from the PDF."""
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
-        text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
+        text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
     
     chapters, articles = [], []
     current_chapter, current_chapter_content = "Uncategorized", []
@@ -56,6 +56,8 @@ def extract_text_from_pdf(pdf_path):
     if current_chapter and current_chapter != "Uncategorized":
         chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
     
+    print("Extracted Chapters:", chapters)
+    print("Extracted Articles:", articles)
     return chapters, articles
 
 def store_vectors(chapters, articles, pdf_name):
@@ -76,6 +78,8 @@ def query_vectors(query, selected_pdf):
     """Queries Pinecone for the most relevant result."""
     query_vector = model.encode(query).tolist()
     results = index.query(vector=query_vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
+    
+    print("Query Results:", results)
     
     if results and results["matches"]:
         return "\n\n".join([match["metadata"]["text"] for match in results["matches"]])
