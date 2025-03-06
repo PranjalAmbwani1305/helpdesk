@@ -66,6 +66,20 @@ gpt_query = st.text_input("Ask a question (in English or Arabic):", key="user_qu
 
 if st.button("Get Answer", key="query_button"):
     if gpt_query:
-        st.write("**Answer:** [Logic to fetch answer from Pinecone & model will go here]")
+        # Convert user query to embedding
+        query_embedding = model.encode(gpt_query).tolist()
+
+        # Search Pinecone index for relevant passage
+        search_result = index.query(vector=query_embedding, top_k=3, include_metadata=True)
+
+        if search_result and 'matches' in search_result:
+            if search_result["matches"]:
+                best_match = search_result["matches"][0]
+                retrieved_text = best_match["metadata"]["text"]
+                st.write("**Answer:**", retrieved_text)
+            else:
+                st.write("**Answer:** No relevant information found.")
+        else:
+            st.write("**Answer:** No relevant information found.")
     else:
         st.warning("Please enter a question.")
