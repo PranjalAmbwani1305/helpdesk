@@ -13,93 +13,111 @@ index_name = "helpdesk"
 
 # Initialize Pinecone
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
+
+# Check if index exists, else create it
 if index_name not in pc.list_indexes().names():
     pc.create_index(
         name=index_name,
-        dimension=384,  # Adjust based on your embedding model
+        dimension=384,  # Ensure this matches your embedding model output
         metric="cosine"
     )
+
 index = pc.Index(index_name)
 
 # Initialize sentence transformer model
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Function to extract and chunk text from PDF
-def extract_text_from_pdf(pdf_path):
-    with open(pdf_path, "rb") as f:
-        reader = PyPDF2.PdfReader(f)
+# Regex patterns for Chapters & Articles
+chapter_pattern = r'^(Chapter \d+):\s*(.*)$'
+article_pattern = r'^(Article \d+):\s*(.*)$'
+
+def process_pdf(pdf_path, pdf_name):
+    with open(pdf_path, "rb") as file:
+        reader = PyPDF2.PdfReader(file)
         text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
-    return text
-
-# Function to extract article and chapter numbers
-def extract_metadata(text):
-    article_match = re.search(r"Article\s(\d+)", text, re.IGNORECASE)
-    chapter_match = re.search(r"Chapter\s(\d+):\s([\w\s]+)", text, re.IGNORECASE)
-    article_number = article_match.group(1) if article_match else "Unknown"
-    chapter_number = chapter_match.group(1) if chapter_match else "Unknown"
-    chapter_name = chapter_match.group(2) if chapter_match else "Unknown"
-    return article_number, chapter_number, chapter_name
-
-# Function to chunk text into smaller passages
-def chunk_text(text, chunk_size=500):
-    words = text.split()
-    return [" ".join(words[i:i+chunk_size]) for i in range(0, len(words), chunk_size)]
-
-# Function to store chunks in Pinecone
-def store_chunks_in_pinecone(chunks, pdf_name):
-    vectors = []
-    for i, chunk in enumerate(chunks):
-        article_number, chapter_number, chapter_name = extract_metadata(chunk)
-        embedding = model.encode(chunk).tolist()
-        vectors.append({
-            "id": f"{pdf_name}-article-{article_number}-{i}",
-            "values": embedding,
-            "metadata": {
-                "text": chunk,
-                "article_number": article_number,
-                "chapter_number": chapter_number,
-                "chapter_name": chapter_name,
-                "pdf_name": pdf_name,
-                "type": "article"
-            }
+    
+    articles = []
+    current_chapter = None
+    current_article = None
+    current_article_content = []
+    
+    for line in text.split("\n"):
+        line = line.strip()
+        
+        chapter_match = re.match(chapter_pattern, line)
+        if chapter_match:
+            current_chapter = chapter_match.group(2)
+        
+        article_match = re.match(article_pattern, line)
+        if article_match:
+            if current_article:
+                articles.append({
+                    "chapter": current_chapter,
+                    "article_number": current_article.split()[1],
+                    "text": " ".join(current_article_content),
+                    "pdf_name": pdf_name,
+                    "type": "article"
+                })
+            current_article = article_match.group(1)
+            current_article_content = []
+        else:
+            if current_article:
+                current_article_content.append(line)
+    
+    if current_article:
+        articles.append({
+            "chapter": current_chapter,
+            "article_number": current_article.split()[1],
+            "text": " ".join(current_article_content),
+            "pdf_name": pdf_name,
+            "type": "article"
         })
-    index.upsert(vectors=vectors)
+    
+    return articles
+
+def store_vectors(articles):
+    for i, article in enumerate(articles):
+        article_vector = model.encode(article['text']).tolist()
+        index.upsert([
+            (f"{article['pdf_name']}-article-{article['article_number']}", article_vector, article)
+        ])
+
+def query_vectors(query, selected_pdf):
+    vector = model.encode(query).tolist()
+    filter_query = {"pdf_name": {"$eq": selected_pdf}, "type": {"$eq": "article"}}
+    
+    results = index.query(vector=vector, top_k=5, include_metadata=True, filter=filter_query)
+    
+    if results["matches"]:
+        return [match["metadata"] for match in results["matches"]]
+    return []
 
 # Streamlit UI
-st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk for Saudi Arabia</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk</h1>", unsafe_allow_html=True)
 
-# Upload PDF
-uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"], key="file_upload")
-if uploaded_file:
-    temp_pdf_path = f"temp_{uploaded_file.name}"
-    with open(temp_pdf_path, "wb") as f:
-        f.write(uploaded_file.read())
-    st.success("PDF uploaded successfully!")
-    
-    # Process and store in Pinecone
-    extracted_text = extract_text_from_pdf(temp_pdf_path)
-    text_chunks = chunk_text(extracted_text)
-    store_chunks_in_pinecone(text_chunks, uploaded_file.name)
-    st.success("PDF content has been processed and stored in Pinecone!")
+pdf_source = st.radio("Select PDF Source", ("Upload from PC", "Choose from Document Storage"))
+if pdf_source == "Upload from PC":
+    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
+    if uploaded_file:
+        temp_pdf_path = f"temp_{uploaded_file.name}"
+        with open(temp_pdf_path, "wb") as f:
+            f.write(uploaded_file.read())
+        
+        articles = process_pdf(temp_pdf_path, uploaded_file.name)
+        store_vectors(articles)
+        st.success("PDF uploaded and processed successfully!")
 
-# Query Input
-gpt_query = st.text_input("Ask a question (in English or Arabic):", key="user_query")
-if st.button("Get Answer", key="query_button"):
-    if gpt_query:
-        # Convert user query to embedding
-        query_embedding = model.encode(gpt_query).tolist()
+st.subheader("Choose Input Language")
+input_language = st.selectbox("Select Input Language", ("English", "Arabic"))
 
-        # Search Pinecone index for relevant passage
-        search_result = index.query(vector=query_embedding, top_k=3, include_metadata=True)
+st.subheader("Choose Response Language")
+response_language = st.selectbox("Select Response Language", ("English", "Arabic"))
 
-        if search_result and 'matches' in search_result:
-            if search_result["matches"]:
-                best_match = search_result["matches"][0]
-                retrieved_text = best_match["metadata"]["text"]
-                st.write("**Answer:**", retrieved_text)
-            else:
-                st.write("**Answer:** No relevant information found.")
-        else:
-            st.write("**Answer:** No relevant information found.")
+query = st.text_input("Ask a question:")
+if st.button("Get Answer"):
+    if query and uploaded_file:
+        responses = query_vectors(query, uploaded_file.name)
+        for res in responses:
+            st.write(f"**Chapter {res['chapter']} - Article {res['article_number']}:** {res['text']}")
     else:
-        st.warning("Please enter a question.")
+        st.warning("Please upload a PDF and enter a query.")
