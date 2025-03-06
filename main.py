@@ -2,123 +2,116 @@ import streamlit as st
 import pinecone
 import PyPDF2
 import os
+import re
 from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
-import re
 
 # Load environment variables for Pinecone API key
 load_dotenv()
-
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-INDEX_NAME = "helpdesk"
+index_name = "helpdesk"
 
 # Initialize Pinecone
 from pinecone import Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
-
-if INDEX_NAME not in pc.list_indexes().names():
-    pc.create_index(name=INDEX_NAME, dimension=384, metric="cosine")
-
-index = pc.Index(INDEX_NAME)
+index = pc.Index(index_name)
 
 # Initialize sentence transformer model
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# File to store uploaded PDFs persistently
-PDF_STORAGE_FILE = "uploaded_pdfs.txt"
+# Regex patterns for Chapters & Articles
+chapter_pattern = r'^(Chapter (\d+|[A-Za-z]+)):.*$'
+article_pattern = r'^(Article (\d+|[A-Za-z]+)):.*$'
 
-def load_uploaded_pdfs():
-    if os.path.exists(PDF_STORAGE_FILE):
-        with open(PDF_STORAGE_FILE, "r") as f:
-            return f.read().splitlines()
-    return []
-
-def save_uploaded_pdfs(pdf_list):
-    with open(PDF_STORAGE_FILE, "w") as f:
-        f.write("\n".join(pdf_list))
-
-uploaded_pdfs = load_uploaded_pdfs()
-
-# Function to process PDF, extract chapters and articles
-def process_pdf(pdf_path, pdf_name):
+# Function to process PDF and extract Chapters & Articles
+def process_pdf(pdf_path):
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
         text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
     
-    print("Extracted Text:", text[:500])  # Debugging output
-    
-    sections = []
-    current_chapter = None
-    current_article = None
-    current_content = []
-
-    chapter_pattern = r'^(Chapter \w+: .*)$'
-    article_pattern = r'^(Article \d+: .*)$'
+    chapters, articles = [], []
+    current_chapter, current_chapter_content = "Uncategorized", []
+    current_article, current_article_content = None, []
 
     paragraphs = text.split('\n')
-    print("Paragraphs:", paragraphs[:10])  # Debugging output
 
     for para in paragraphs:
         para = para.strip()
-        
+
+        # Detect Chapters (e.g., "Chapter One: General Principles")
         if re.match(chapter_pattern, para):
-            if current_article:
-                sections.append({"chapter": current_chapter, "article": current_article, "content": " ".join(current_content)})
+            if current_chapter != "Uncategorized":
+                chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
             current_chapter = para
-            current_article = None
-            current_content = []
+            current_chapter_content = []
+        
+        # Detect Articles (e.g., "Article 1:")
         elif re.match(article_pattern, para):
             if current_article:
-                sections.append({"chapter": current_chapter, "article": current_article, "content": " ".join(current_content)})
+                articles.append({'chapter': current_chapter, 'title': current_article, 'content': ' '.join(current_article_content)})
             current_article = para
-            current_content = []
+            current_article_content = []
+        
+        # Add content to current section
         else:
-            current_content.append(para)
-    
-    if current_article:
-        sections.append({"chapter": current_chapter, "article": current_article, "content": " ".join(current_content)})
-    
-    if not sections:
-        st.error("No valid sections found in the PDF. Check formatting.")
-    
-    return sections
+            if current_article:
+                current_article_content.append(para)
+            else:
+                current_chapter_content.append(para)
 
-# Function to store vectors in Pinecone
-def store_vectors(sections, pdf_name):
-    vectors = []
-    for i, section in enumerate(sections):
-        title = f"{section['chapter']} - {section['article']}"
-        content = section['content']
-        
-        title_vector = model.encode(title).tolist()
-        content_vector = model.encode(content).tolist()
-        
-        vectors.append((f"{pdf_name}-section-{i}-title", title_vector, {"pdf_name": pdf_name, "chapter": section['chapter'], "article": section['article'], "text": title, "type": "title"}))
-        vectors.append((f"{pdf_name}-section-{i}-content", content_vector, {"pdf_name": pdf_name, "chapter": section['chapter'], "article": section['article'], "text": content, "type": "content"}))
-    
-    index.upsert(vectors)
+    # Append last detected sections
+    if current_article:
+        articles.append({'chapter': current_chapter, 'title': current_article, 'content': ' '.join(current_article_content)})
+    if current_chapter and current_chapter != "Uncategorized":
+        chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
+
+    return chapters, articles
+
+# Function to store Chapters & Articles as vectors in Pinecone
+def store_vectors(chapters, articles, pdf_name):
+    for i, chapter in enumerate(chapters):
+        chapter_vector = model.encode(chapter['content']).tolist()
+        index.upsert([
+            (f"{pdf_name}-chapter-{i}", chapter_vector, {"pdf_name": pdf_name, "text": chapter['content'], "type": "chapter"})
+        ])
+
+    for i, article in enumerate(articles):
+        article_vector = model.encode(article['content']).tolist()
+        index.upsert([
+            (f"{pdf_name}-article-{i}", article_vector, {"pdf_name": pdf_name, "chapter": article['chapter'], "text": article['content'], "type": "article"})
+        ])
 
 # Function to query vectors from Pinecone
 def query_vectors(query, selected_pdf):
-    vector = model.encode(query).tolist()
-    results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
-    
-    if results["matches"]:
-        response_text = ""
-        for match in results["matches"]:
-            response_text += f"**{match['metadata']['chapter']} - {match['metadata']['article']}:**\n{match['metadata']['text']}\n\n"
-        return response_text
-    return "No relevant information found in the selected document."
+    try:
+        vector = model.encode(query).tolist()
+        results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
+        
+        if results["matches"]:
+            matched_texts = []
+            
+            for match in results["matches"]:
+                section_type = match["metadata"]["type"]
+                section_text = match["metadata"]["text"]
+                
+                if section_type == "chapter":
+                    matched_texts.append(f"**Chapter:** {section_text}")
+                elif section_type == "article":
+                    chapter_name = match["metadata"].get("chapter", "Uncategorized")
+                    matched_texts.append(f"**{chapter_name}**\n{section_text}")
+            
+            return "\n\n".join(matched_texts)
+        else:
+            return "No relevant information found in the selected document."
+    except Exception as e:
+        return f"Error during query: {e}"
 
 # Streamlit UI
 st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk</h1>", unsafe_allow_html=True)
 
-# Sidebar to show uploaded PDFs
-st.sidebar.header("Uploaded PDFs")
-selected_pdf = st.sidebar.selectbox("Select a PDF", uploaded_pdfs if uploaded_pdfs else ["No PDFs uploaded"])
-
-# PDF Upload Section
+# PDF Source Selection
 pdf_source = st.radio("Select PDF Source", ("Upload from PC", "Choose from Document Storage"))
+
 if pdf_source == "Upload from PC":
     uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
     if uploaded_file:
@@ -126,15 +119,13 @@ if pdf_source == "Upload from PC":
         with open(temp_pdf_path, "wb") as f:
             f.write(uploaded_file.read())
         
-        sections = process_pdf(temp_pdf_path, uploaded_file.name)
-        if sections:
-            store_vectors(sections, uploaded_file.name)
-            
-            if uploaded_file.name not in uploaded_pdfs:
-                uploaded_pdfs.append(uploaded_file.name)
-                save_uploaded_pdfs(uploaded_pdfs)
-            
-            st.success("PDF uploaded and processed!")
+        # Process PDF to extract chapters & articles
+        chapters, articles = process_pdf(temp_pdf_path)
+
+        # Store extracted sections in Pinecone
+        store_vectors(chapters, articles, uploaded_file.name)
+
+        st.success("PDF uploaded and processed successfully!")
 else:
     st.info("Document Storage feature is currently unavailable.")
 
@@ -144,9 +135,10 @@ response_language = st.selectbox("Choose Response Language", ("English", "Arabic
 
 # Query Input and Processing
 query = st.text_input("Ask a legal question:")
+
 if st.button("Get Answer"):
-    if query:
-        response = query_vectors(query, selected_pdf if selected_pdf != "No PDFs uploaded" else "")
+    if query and uploaded_file:
+        response = query_vectors(query, uploaded_file.name)
         st.write(f"**Answer:** {response}")
     else:
         st.warning("Please upload a PDF and enter a query.")
