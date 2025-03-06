@@ -3,15 +3,14 @@ import pinecone
 import PyPDF2
 import os
 import re
-from deep_translator import GoogleTranslator
+from deep_translator import GoogleTranslator 
 from sentence_transformers import SentenceTransformer
 
 # Initialize Pinecone
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-from pinecone import Pinecone
-pc = Pinecone(api_key=PINECONE_API_KEY)
+pinecone.init(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
-index = pc.Index(index_name)
+index = pinecone.Index(index_name)
 
 # Load Hugging Face Model (Sentence Transformer)
 model = SentenceTransformer("all-MiniLM-L6-v2")
@@ -65,21 +64,21 @@ def store_vectors(chapters, articles, pdf_name):
         chapter_vector = model.encode(chapter['content']).tolist()
         index.upsert([(
             f"{pdf_name}-chapter-{i}", chapter_vector, 
-            {"pdf_name": pdf_name, "text": chapter['content'], "type": "chapter"}
+            {"pdf_name": pdf_name, "text": chapter['content'], "type": "chapter", "title": chapter['title']}
         )])
     
     for i, article in enumerate(articles):
         article_vector = model.encode(article['content']).tolist()
         index.upsert([(
             f"{pdf_name}-article-{i}", article_vector, 
-            {"pdf_name": pdf_name, "chapter": article['chapter'], "text": article['content'], "type": "article", "title": article['title']}
+            {"pdf_name": pdf_name, "chapter": article['chapter'], "text": article['content'], "type": "article", "title": f"Article {article['title']}"}
         )])
 
 def query_vectors(query, selected_pdf):
     """Queries Pinecone for the most relevant result, prioritizing article and chapter matches."""
     query_vector = model.encode(query).tolist()
     
-    # Look for article mentions in the query (e.g., "Article 1", "Article One", etc.)
+    # Look for specific Article mentions in the query (e.g., "Article 1", "Article One", etc.)
     article_match = re.search(r'Article (\d+|[A-Za-z]+)', query, re.IGNORECASE)
     if article_match:
         article_number = article_match.group(1)
