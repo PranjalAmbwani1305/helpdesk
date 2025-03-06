@@ -65,6 +65,15 @@ def store_chunks_in_pinecone(chunks, pdf_name):
         })
     index.upsert(vectors=vectors)
 
+# Function to list stored PDFs
+def list_stored_pdfs():
+    stored_pdfs = index.describe_index_stats()
+    if "namespaces" in stored_pdfs:
+        return list(stored_pdfs["namespaces"].keys())
+    return []
+
+pdf_list = list_stored_pdfs()
+
 # Streamlit UI
 st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk for Saudi Arabia</h1>", unsafe_allow_html=True)
 
