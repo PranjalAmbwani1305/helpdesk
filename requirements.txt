@@ -9,3 +9,4 @@ pypdf2
 pinecone
 torch
 nltk
+json
