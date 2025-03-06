@@ -16,10 +16,6 @@ INDEX_NAME = "helpdesk"
 # Initialize Pinecone
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 
-# Ensure the index exists
-if INDEX_NAME not in pc.list_indexes():
-    pc.create_index(name=INDEX_NAME, dimension=384, metric="cosine")
-
 index = pc.Index(INDEX_NAME)
 
 # Initialize sentence transformer model
