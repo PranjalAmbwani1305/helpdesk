@@ -52,7 +52,7 @@ def store_chunks_in_pinecone(chunks, pdf_name):
         article_number, chapter_number, chapter_name = extract_metadata(chunk)
         embedding = model.encode(chunk).tolist()
         vectors.append({
-            "id": f"{pdf_name}-article-{article_number}",
+            "id": f"{pdf_name}-article-{article_number}-{i}",
             "values": embedding,
             "metadata": {
                 "text": chunk,
@@ -65,53 +65,25 @@ def store_chunks_in_pinecone(chunks, pdf_name):
         })
     index.upsert(vectors=vectors)
 
-# Function to list stored PDFs
-def list_stored_pdfs():
-    stored_pdfs = index.describe_index_stats()
-    if "namespaces" in stored_pdfs:
-        return list(stored_pdfs["namespaces"].keys())
-    return []
-
-pdf_list = list_stored_pdfs()
-
 # Streamlit UI
 st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk for Saudi Arabia</h1>", unsafe_allow_html=True)
 
-# Sidebar for stored PDFs
-st.sidebar.header("📂 Stored PDFs")
-if pdf_list:
-    with st.sidebar.expander("📝 View Stored PDFs", expanded=False):
-        for pdf in pdf_list:
-            st.sidebar.write(f"📄 {pdf}")
-else:
-    st.sidebar.write("No PDFs stored yet. Upload one!")
-
-selected_pdf = None
-pdf_source = st.radio("Select PDF Source", ["Upload from PC", "Choose from the Document Storage"], key="pdf_source")
-
-if pdf_source == "Upload from PC":
-    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"], key="file_upload")
-    if uploaded_file:
-        temp_pdf_path = f"temp_{uploaded_file.name}"
-        with open(temp_pdf_path, "wb") as f:
-            f.write(uploaded_file.read())
-        st.success("PDF uploaded successfully!")
-        
-        # Process and store in Pinecone
-        extracted_text = extract_text_from_pdf(temp_pdf_path)
-        text_chunks = chunk_text(extracted_text)
-        store_chunks_in_pinecone(text_chunks, uploaded_file.name)
-        st.success("PDF content has been processed and stored in Pinecone!")
-else:
-    selected_pdf = st.selectbox("Choose from stored documents", pdf_list, key="stored_pdf")
-
-# Language Selection
-input_language = st.selectbox("Choose Input Language", ("English", "Arabic"), key="input_lang")
-response_language = st.selectbox("Choose Response Language", ("English", "Arabic"), key="response_lang")
+# Upload PDF
+uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"], key="file_upload")
+if uploaded_file:
+    temp_pdf_path = f"temp_{uploaded_file.name}"
+    with open(temp_pdf_path, "wb") as f:
+        f.write(uploaded_file.read())
+    st.success("PDF uploaded successfully!")
+    
+    # Process and store in Pinecone
+    extracted_text = extract_text_from_pdf(temp_pdf_path)
+    text_chunks = chunk_text(extracted_text)
+    store_chunks_in_pinecone(text_chunks, uploaded_file.name)
+    st.success("PDF content has been processed and stored in Pinecone!")
 
 # Query Input
 gpt_query = st.text_input("Ask a question (in English or Arabic):", key="user_query")
-
 if st.button("Get Answer", key="query_button"):
     if gpt_query:
         # Convert user query to embedding
