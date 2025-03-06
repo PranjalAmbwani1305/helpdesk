@@ -23,15 +23,28 @@ model = SentenceTransformer("all-MiniLM-L6-v2")
 chapter_pattern = r'^(Chapter (\d+|[A-Za-z]+)):.*$'
 article_pattern = r'^(Article (\d+|[A-Za-z]+)):.*$'
 
+# Function to fetch stored PDFs
+def get_stored_pdfs():
+    storage_folder = "document_storage"  # Define storage folder
+    if not os.path.exists(storage_folder):
+        os.makedirs(storage_folder)  # Create folder if it doesn't exist
+    return [file for file in os.listdir(storage_folder) if file.endswith(".pdf")]
+
+# Function to clean extracted text
+def clean_text(text):
+    """Removes unnecessary spaces, special characters, and unwanted text like 'PDFm yURL'"""
+    text = re.sub(r"\s+", " ", text)  # Remove excessive spaces
+    text = re.sub(r"PDFm yURL.*?quickly", "", text, flags=re.IGNORECASE)  # Remove junk chunks
+    return text.strip()
+
 # Function to process PDF and extract Chapters & Articles
 def process_pdf(pdf_path):
-    chapters = []  # Fixed syntax issue
-    articles = []  # Fixed syntax issue
-    
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
         text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
     
+    text = clean_text(text)  # Clean extracted text
+    chapters, articles = [], []
     current_chapter, current_chapter_content = "Uncategorized", []
     current_article, current_article_content = None, []
 
@@ -40,26 +53,21 @@ def process_pdf(pdf_path):
     for para in paragraphs:
         para = para.strip()
 
-        # Detect Chapters
+        # Detect Chapters (e.g., "Chapter One: General Principles")
         chapter_match = re.match(chapter_pattern, para)
         if chapter_match:
-            if current_chapter and current_chapter_content:
+            if current_chapter != "Uncategorized":
                 chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
             current_chapter = para
             current_chapter_content = []
             continue
         
-        # Detect Articles
+        # Detect Articles (e.g., "Article 1:")
         article_match = re.match(article_pattern, para)
         if article_match:
-            if current_article and current_article_content:
-                articles.append({
-                    'chapter': current_chapter, 
-                    'title': current_article, 
-                    'article_number': article_match.group(2) if article_match else "Unknown",
-                    'content': ' '.join(current_article_content)
-                })
-            current_article = article_match.group(1)
+            if current_article:
+                articles.append({'chapter': current_chapter, 'title': current_article, 'article_number': article_match.group(2), 'content': ' '.join(current_article_content)})
+            current_article = para
             current_article_content = []
             continue
         
@@ -70,9 +78,9 @@ def process_pdf(pdf_path):
             current_chapter_content.append(para)
 
     # Append last detected sections
-    if current_article and current_article_content:
-        articles.append({'chapter': current_chapter, 'title': current_article, 'content': ' '.join(current_article_content)})
-    if current_chapter and current_chapter_content:
+    if current_article:
+        articles.append({'chapter': current_chapter, 'title': current_article, 'article_number': article_match.group(2), 'content': ' '.join(current_article_content)})
+    if current_chapter and current_chapter != "Uncategorized":
         chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
 
     return chapters, articles
@@ -89,9 +97,9 @@ def store_vectors(chapters, articles, pdf_name):
         article_vector = model.encode(article['content']).tolist()
         index.upsert([
             (f"{pdf_name}-article-{i}", article_vector, {
-                "pdf_name": pdf_name,
-                "chapter": article['chapter'],
-                "article_number": article.get('article_number', "Unknown"),
+                "pdf_name": pdf_name, 
+                "chapter": article['chapter'], 
+                "article_number": article['article_number'],  # Store article number
                 "text": article['content'], 
                 "type": "article"
             })
@@ -108,7 +116,7 @@ def query_vectors(query, selected_pdf):
             
             for match in results["matches"]:
                 section_type = match["metadata"]["type"]
-                section_text = match["metadata"]["text"]
+                section_text = clean_text(match["metadata"]["text"])  # Clean retrieved text
                 
                 if section_type == "chapter":
                     matched_texts.append(f"**Chapter:** {section_text}")
@@ -129,6 +137,8 @@ st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk</h1>", un
 # PDF Source Selection
 pdf_source = st.radio("Select PDF Source", ("Upload from PC", "Choose from Document Storage"))
 
+selected_file = None  # Initialize selected file variable
+
 if pdf_source == "Upload from PC":
     uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
     if uploaded_file:
@@ -143,8 +153,18 @@ if pdf_source == "Upload from PC":
         store_vectors(chapters, articles, uploaded_file.name)
 
         st.success("PDF uploaded and processed successfully!")
-else:
-    st.info("Document Storage feature is currently unavailable.")
+        selected_file = uploaded_file.name  # Assign selected file name
+
+elif pdf_source == "Choose from Document Storage":
+    stored_pdfs = get_stored_pdfs()
+    if stored_pdfs:
+        selected_file = st.selectbox("Select a stored document:", stored_pdfs)
+    else:
+        st.warning("No documents available in storage.")
+
+# Display selected document
+if selected_file:
+    st.success(f"Selected document: {selected_file}")
 
 # Language Selection
 input_language = st.selectbox("Choose Input Language", ("English", "Arabic"))
@@ -154,8 +174,8 @@ response_language = st.selectbox("Choose Response Language", ("English", "Arabic
 query = st.text_input("Ask a legal question:")
 
 if st.button("Get Answer"):
-    if query and uploaded_file:
-        response = query_vectors(query, uploaded_file.name)
+    if query and selected_file:
+        response = query_vectors(query, selected_file)
         st.write(f"**Answer:** {response}")
     else:
-        st.warning("Please upload a PDF and enter a query.")
+        st.warning("Please upload or select a PDF and enter a query.")
