@@ -12,16 +12,7 @@ load_dotenv()
 # Pinecone setup
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
-index_name = "legal-helpdesk"
-
-# Create index if not exists
-if index_name not in pc.list_indexes().names():
-    pc.create_index(
-        name=index_name,
-        dimension=768,  # Hugging Face embedding size
-        metric="cosine"
-    )
-
+index_name = "helpdesk"
 index = pc.Index(index_name)
 
 # Load Hugging Face Embedding Model
