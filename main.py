@@ -7,7 +7,7 @@ from deep_translator import GoogleTranslator
 from sentence_transformers import SentenceTransformer
 
 # Initialize Pinecone
-PINECONE_API_KEY = "YOUR_PINECONE_API_KEY"
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 index = pc.Index(index_name)
