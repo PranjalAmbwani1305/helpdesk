@@ -3,20 +3,24 @@ import pinecone
 import PyPDF2
 import os
 import json
-import time
 import re
 from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
 
 # Load environment variables for Pinecone API key
 load_dotenv()
+
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-index_name = "helpdesk"
+INDEX_NAME = "helpdesk"
 
 # Initialize Pinecone
-from pinecone import Pinecone
-pc = Pinecone(api_key=PINECONE_API_KEY)
-index = pc.Index(index_name)
+pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
+
+# Ensure the index exists
+if INDEX_NAME not in pc.list_indexes():
+    pc.create_index(name=INDEX_NAME, dimension=384, metric="cosine")
+
+index = pc.Index(INDEX_NAME)
 
 # Initialize sentence transformer model
 model = SentenceTransformer("all-MiniLM-L6-v2")
@@ -25,20 +29,18 @@ model = SentenceTransformer("all-MiniLM-L6-v2")
 PDF_STORAGE_FILE = "uploaded_pdfs.json"
 
 def load_uploaded_pdfs():
-    """Load previously uploaded PDFs from storage"""
     if os.path.exists(PDF_STORAGE_FILE):
         with open(PDF_STORAGE_FILE, "r") as f:
             return json.load(f)
     return []
 
 def save_uploaded_pdfs(pdf_list):
-    """Save uploaded PDFs list persistently"""
     with open(PDF_STORAGE_FILE, "w") as f:
         json.dump(pdf_list, f)
 
 uploaded_pdfs = load_uploaded_pdfs()
 
-# Function to process PDF and extract structured sections
+# Function to process PDF, extract chapters and articles
 def process_pdf(pdf_path, pdf_name):
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
@@ -52,33 +54,41 @@ def process_pdf(pdf_path, pdf_name):
     chapter_pattern = r'^(Chapter \w+: .*)$'
     article_pattern = r'^(Article \d+: .*)$'
 
-    paragraphs = text.split("\n")
+    paragraphs = text.split('\n')
 
     for para in paragraphs:
         para = para.strip()
-
-        # Detect chapter
+        
         if re.match(chapter_pattern, para):
             if current_article:
-                sections.append({"chapter": current_chapter, "article": current_article, "content": " ".join(current_content)})
+                sections.append({
+                    "chapter": current_chapter,
+                    "article": current_article,
+                    "content": " ".join(current_content)
+                })
             current_chapter = para
             current_article = None
             current_content = []
-
-        # Detect article
+        
         elif re.match(article_pattern, para):
             if current_article:
-                sections.append({"chapter": current_chapter, "article": current_article, "content": " ".join(current_content)})
+                sections.append({
+                    "chapter": current_chapter,
+                    "article": current_article,
+                    "content": " ".join(current_content)
+                })
             current_article = para
             current_content = []
-
-        # Collect article content
+        
         else:
             current_content.append(para)
     
-    # Append last collected article
     if current_article:
-        sections.append({"chapter": current_chapter, "article": current_article, "content": " ".join(current_content)})
+        sections.append({
+            "chapter": current_chapter,
+            "article": current_article,
+            "content": " ".join(current_content)
+        })
     
     return sections
 
@@ -87,17 +97,13 @@ def store_vectors(sections, pdf_name):
     for i, section in enumerate(sections):
         title = f"{section['chapter']} - {section['article']}"
         content = section['content']
-
+        
         title_vector = model.encode(title).tolist()
         content_vector = model.encode(content).tolist()
-
+        
         # Debugging logs
-        st.write(f"Upserting: {pdf_name}-section-{i}")
-        st.write(f"Title: {title}")
-        st.write(f"Content: {content[:200]}...")  # Show first 200 characters
-        st.write("Title Vector Size:", len(title_vector))
-        st.write("Content Vector Size:", len(content_vector))
-
+        print(f"Upserting: {pdf_name}-section-{i}")
+        
         index.upsert([
             (f"{pdf_name}-section-{i}-title", title_vector, {
                 "pdf_name": pdf_name,
@@ -115,9 +121,6 @@ def store_vectors(sections, pdf_name):
             })
         ])
 
-        # Prevent hitting rate limits
-        time.sleep(0.5)
-
 # Function to query vectors from Pinecone
 def query_vectors(query, selected_pdf):
     vector = model.encode(query).tolist()
@@ -133,7 +136,7 @@ def query_vectors(query, selected_pdf):
 # Streamlit UI
 st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk</h1>", unsafe_allow_html=True)
 
-# Sidebar for uploaded PDFs
+# Sidebar to show uploaded PDFs
 st.sidebar.header("Uploaded PDFs")
 selected_pdf = st.sidebar.selectbox("Select a PDF", uploaded_pdfs if uploaded_pdfs else ["No PDFs uploaded"])
 
@@ -170,12 +173,3 @@ if st.button("Get Answer"):
     else:
         st.warning("Please upload a PDF and enter a query.")
 
-# Debugging - Check stored data in Pinecone
-st.write("Checking Pinecone stored data...")
-query_results = index.query(vector=model.encode("test").tolist(), top_k=3, include_metadata=True)
-
-if query_results.get("matches"):
-    st.success("Data is stored in Pinecone! 🎯")
-    st.write(query_results)
-else:
-    st.error("No data found in Pinecone! ❌")
