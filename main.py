@@ -12,6 +12,7 @@ PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 index_name = "helpdesk"
 
 # Initialize Pinecone
+from pinecone import Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
 index = pc.Index(index_name)
 
@@ -37,34 +38,32 @@ def process_pdf(pdf_path):
     for para in paragraphs:
         para = para.strip()
 
-        # Detect Chapters (e.g., "Chapter 3: Governance")
-        chapter_match = re.match(chapter_pattern, para)
-        if chapter_match:
+        # Detect Chapters
+        if re.match(chapter_pattern, para):
             if current_chapter != "Uncategorized":
                 chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
-            current_chapter = chapter_match.group(1)
+            current_chapter = para
             current_chapter_content = []
-            continue
         
-        # Detect Articles (e.g., "Article 5:")
+        # Detect Articles
         article_match = re.match(article_pattern, para)
         if article_match:
             if current_article:
                 articles.append({
-                    'chapter': current_chapter,
-                    'title': current_article,
+                    'chapter': current_chapter, 
+                    'title': current_article, 
                     'article_number': article_match.group(2) if article_match else "Unknown",
                     'content': ' '.join(current_article_content)
                 })
             current_article = article_match.group(1)
             current_article_content = []
-            continue
         
-        # Add content to the respective section
-        if current_article:
-            current_article_content.append(para)
+        # Add content to current section
         else:
-            current_chapter_content.append(para)
+            if current_article:
+                current_article_content.append(para)
+            else:
+                current_chapter_content.append(para)
 
     # Append last detected sections
     if current_article:
@@ -89,7 +88,7 @@ def store_vectors(chapters, articles, pdf_name):
                 "pdf_name": pdf_name,
                 "chapter": article['chapter'],
                 "article_number": article.get('article_number', "Unknown"),
-                "text": article['content'],
+                "text": article['content'], 
                 "type": "article"
             })
         ])
@@ -140,12 +139,8 @@ if pdf_source == "Upload from PC":
         store_vectors(chapters, articles, uploaded_file.name)
 
         st.success("PDF uploaded and processed successfully!")
-        selected_pdf = uploaded_file.name  # Set the selected PDF after upload
-    else:
-        selected_pdf = None
 else:
     st.info("Document Storage feature is currently unavailable.")
-    selected_pdf = None  # Reset selected file if storage is unavailable
 
 # Language Selection
 input_language = st.selectbox("Choose Input Language", ("English", "Arabic"))
@@ -155,8 +150,8 @@ response_language = st.selectbox("Choose Response Language", ("English", "Arabic
 query = st.text_input("Ask a legal question:")
 
 if st.button("Get Answer"):
-    if query and selected_pdf:
-        response = query_vectors(query, selected_pdf)
+    if query and uploaded_file:
+        response = query_vectors(query, uploaded_file.name)
         st.write(f"**Answer:** {response}")
     else:
         st.warning("Please upload a PDF and enter a query.")
