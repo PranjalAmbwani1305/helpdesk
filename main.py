@@ -8,9 +8,10 @@ from sentence_transformers import SentenceTransformer
 
 # Initialize Pinecone
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-pinecone.init(api_key=PINECONE_API_KEY)  # Initialize Pinecone with the correct method
+from pinecone import Pinecone
+pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
-index = pinecone.Index(index_name)
+index = pc.Index(index_name)
 
 # Load Hugging Face Model (Sentence Transformer)
 model = SentenceTransformer("all-MiniLM-L6-v2")
