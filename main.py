@@ -12,7 +12,15 @@ load_dotenv()
 # Pinecone setup
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
-index_name = "helpdesk"
+index_name = "legal-helpdesk"
+
+# Create index if not exists
+if index_name not in pc.list_indexes().names():
+    pc.create_index(
+        name=index_name,
+        dimension=768,  # Hugging Face embedding size
+        metric="cosine"
+    )
 
 index = pc.Index(index_name)
 
@@ -80,10 +88,28 @@ def query_pinecone(query):
     return []
 
 # Streamlit UI
-st.title("📜 AI-Powered Legal HelpDesk")
+st.set_page_config(page_title="AI-Powered Legal HelpDesk 🇸🇦", layout="wide")
 
-uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
+st.markdown("<h1 style='text-align: center;'>🤖 AI-Powered Legal HelpDesk for Saudi Arabia 🇸🇦</h1>", unsafe_allow_html=True)
+st.markdown("<h3 style='text-align: center;'>Ask legal questions and retrieve relevant laws</h3>", unsafe_allow_html=True)
 
+# Sidebar for language selection
+st.sidebar.header("🔤 Language Settings")
+input_lang = st.sidebar.radio("Choose Input Language", ["English", "Arabic"])
+response_lang = st.sidebar.radio("Choose Response Language", ["English", "Arabic"])
+
+# PDF Upload
+st.subheader("📂 Select PDF Source")
+option = st.radio("Upload from:", ["Upload from PC", "Choose from the Document Storage"])
+
+if option == "Upload from PC":
+    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
+
+if option == "Choose from the Document Storage":
+    # This can be linked to an actual document storage system
+    st.warning("📁 Document storage integration is not yet implemented.")
+
+# Process PDF
 if uploaded_file:
     pdf_name = uploaded_file.name
     temp_pdf_path = f"temp_{pdf_name}"
@@ -93,16 +119,22 @@ if uploaded_file:
 
     articles = process_pdf(temp_pdf_path)
     store_articles(articles, pdf_name)
-    st.success("PDF processed and articles stored successfully!")
+    st.success("📑 PDF processed and articles stored successfully!")
 
-query = st.text_input("Ask a legal question:")
-if st.button("Search"):
+# User Query
+st.subheader("💬 Ask a Legal Question")
+query = st.text_input("Enter your question (in English or Arabic):")
+if st.button("Search 🔎"):
     if query:
         results = query_pinecone(query)
-        for i, match in enumerate(results):
-            st.write(f"### {i+1}. **Article {match['metadata']['article_number']}**")
-            st.write(f"📖 **Chapter:** {match['metadata']['chapter_number']}")
-            st.write(f"📄 **Text:** {match['metadata']['text']}")
-            st.write("---")
+        if results:
+            for i, match in enumerate(results):
+                st.write(f"### {i+1}. **Article {match['metadata']['article_number']}**")
+                st.write(f"📖 **Chapter:** {match['metadata']['chapter_number']}")
+                st.write(f"📄 **Text:** {match['metadata']['text']}")
+                st.write("---")
+        else:
+            st.warning("⚠️ No relevant articles found.")
     else:
-        st.warning("Please enter a query!")
+        st.warning("⚠️ Please enter a query!")
+
