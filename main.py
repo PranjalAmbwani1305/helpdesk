@@ -23,20 +23,13 @@ model = SentenceTransformer("all-MiniLM-L6-v2")
 chapter_pattern = r'^(Chapter (\d+|[A-Za-z]+)):.*$'
 article_pattern = r'^(Article (\d+|[A-Za-z]+)):.*$'
 
-# Function to fetch stored PDFs
-def get_stored_pdfs():
-    storage_folder = "document_storage"
-    if not os.path.exists(storage_folder):
-        os.makedirs(storage_folder)
-    return [file for file in os.listdir(storage_folder) if file.endswith(".pdf")]
-
 # Function to process PDF and extract Chapters & Articles
 def process_pdf(pdf_path):
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
         text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
 
-    # **Filter out website-related text**
+    # Remove website-related noise
     text = re.sub(r"PDFmyURL.*?quickly", "", text, flags=re.DOTALL)
 
     chapters, articles = [], []
@@ -48,7 +41,7 @@ def process_pdf(pdf_path):
     for para in paragraphs:
         para = para.strip()
 
-        # Detect Chapters (e.g., "Chapter One: General Principles")
+        # Detect Chapters
         chapter_match = re.match(chapter_pattern, para)
         if chapter_match:
             if current_chapter != "Uncategorized":
@@ -57,7 +50,7 @@ def process_pdf(pdf_path):
             current_chapter_content = []
             continue
         
-        # Detect Articles (e.g., "Article 1:")
+        # Detect Articles
         article_match = re.match(article_pattern, para)
         if article_match:
             if current_article:
@@ -66,7 +59,7 @@ def process_pdf(pdf_path):
             current_article_content = []
             continue
         
-        # Add content to current section
+        # Add content
         if current_article:
             current_article_content.append(para)
         else:
@@ -82,54 +75,31 @@ def process_pdf(pdf_path):
 
 # Function to store Chapters & Articles as vectors in Pinecone
 def store_vectors(chapters, articles, pdf_name):
-    for i, chapter in enumerate(chapters):
-        chapter_vector = model.encode(chapter['content']).tolist()
+    if not chapters and not articles:
+        st.error("No data extracted from the PDF. Please check the document format.")
+        return
+    
+    st.write("📌 Storing the first extracted record for debugging:")
+
+    if chapters:
+        chapter_vector = model.encode(chapters[0]['content']).tolist()
+        st.write(f"Storing Chapter: {chapters[0]['title']} - {chapters[0]['content'][:100]}...")
         index.upsert([
-            (f"{pdf_name}-chapter-{i}", chapter_vector, {"pdf_name": pdf_name, "text": chapter['content'], "type": "chapter"})
+            (f"{pdf_name}-chapter-0", chapter_vector, {"pdf_name": pdf_name, "text": chapters[0]['content'], "type": "chapter"})
         ])
 
-    for i, article in enumerate(articles):
-        article_vector = model.encode(article['content']).tolist()
+    if articles:
+        article_vector = model.encode(articles[0]['content']).tolist()
+        st.write(f"Storing Article: {articles[0]['title']} - {articles[0]['content'][:100]}...")
         index.upsert([
-            (f"{pdf_name}-article-{i}", article_vector, {
+            (f"{pdf_name}-article-0", article_vector, {
                 "pdf_name": pdf_name, 
-                "chapter": article['chapter'], 
-                "article_number": article['article_number'],  
-                "text": article['content'], 
+                "chapter": articles[0]['chapter'], 
+                "article_number": articles[0]['article_number'],  
+                "text": articles[0]['content'], 
                 "type": "article"
             })
         ])
-
-# Function to query vectors from Pinecone
-def query_vectors(query, selected_pdf):
-    try:
-        vector = model.encode(query).tolist()
-        results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
-        
-        if results["matches"]:
-            matched_texts = []
-            
-            for match in results["matches"]:
-                section_type = match["metadata"]["type"]
-                section_text = match["metadata"]["text"]
-                
-                if section_type == "chapter":
-                    matched_texts.append(f"**Chapter:** {section_text}")
-                elif section_type == "article":
-                    chapter_name = match["metadata"].get("chapter", "Uncategorized")
-                    article_number = match["metadata"].get("article_number", "Unknown")
-                    matched_texts.append(f"**{chapter_name} - Article {article_number}**\n{section_text}")
-            
-            # **Ensure only relevant Article is returned**
-            if query.lower().startswith("article"):
-                article_number = query.split()[-1]  # Extract the article number from the query
-                matched_texts = [text for text in matched_texts if f"Article {article_number}" in text]
-            
-            return "\n\n".join(matched_texts) if matched_texts else "No relevant information found."
-        else:
-            return "No relevant information found in the selected document."
-    except Exception as e:
-        return f"Error during query: {e}"
 
 # Streamlit UI
 st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk</h1>", unsafe_allow_html=True)
@@ -153,26 +123,13 @@ if pdf_source == "Upload from PC":
         selected_file = uploaded_file.name  
 
 elif pdf_source == "Choose from Document Storage":
-    stored_pdfs = get_stored_pdfs()
+    storage_folder = "document_storage"
+    stored_pdfs = [file for file in os.listdir(storage_folder) if file.endswith(".pdf")] if os.path.exists(storage_folder) else []
+    
     if stored_pdfs:
         selected_file = st.selectbox("Select a stored document:", stored_pdfs)
     else:
         st.warning("No documents available in storage.")
 
-# Display selected document
 if selected_file:
     st.success(f"Selected document: {selected_file}")
-
-# Language Selection
-input_language = st.selectbox("Choose Input Language", ("English", "Arabic"))
-response_language = st.selectbox("Choose Response Language", ("English", "Arabic"))
-
-# Query Input and Processing
-query = st.text_input("Ask a legal question:")
-
-if st.button("Get Answer"):
-    if query and selected_file:
-        response = query_vectors(query, selected_file)
-        st.write(f"**Answer:** {response}")
-    else:
-        st.warning("Please upload or select a PDF and enter a query.")
