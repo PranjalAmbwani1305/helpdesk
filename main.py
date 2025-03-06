@@ -25,11 +25,13 @@ article_pattern = r'^(Article (\d+|[A-Za-z]+)):.*$'
 
 # Function to process PDF and extract Chapters & Articles
 def process_pdf(pdf_path):
+    chapters = []  # Fixed syntax issue
+    articles = []  # Fixed syntax issue
+    
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
         text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
     
-    chapters, articles = []
     current_chapter, current_chapter_content = "Uncategorized", []
     current_article, current_article_content = None, []
 
@@ -39,16 +41,18 @@ def process_pdf(pdf_path):
         para = para.strip()
 
         # Detect Chapters
-        if re.match(chapter_pattern, para):
-            if current_chapter != "Uncategorized":
+        chapter_match = re.match(chapter_pattern, para)
+        if chapter_match:
+            if current_chapter and current_chapter_content:
                 chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
             current_chapter = para
             current_chapter_content = []
+            continue
         
         # Detect Articles
         article_match = re.match(article_pattern, para)
         if article_match:
-            if current_article:
+            if current_article and current_article_content:
                 articles.append({
                     'chapter': current_chapter, 
                     'title': current_article, 
@@ -57,18 +61,18 @@ def process_pdf(pdf_path):
                 })
             current_article = article_match.group(1)
             current_article_content = []
+            continue
         
         # Add content to current section
+        if current_article:
+            current_article_content.append(para)
         else:
-            if current_article:
-                current_article_content.append(para)
-            else:
-                current_chapter_content.append(para)
+            current_chapter_content.append(para)
 
     # Append last detected sections
-    if current_article:
+    if current_article and current_article_content:
         articles.append({'chapter': current_chapter, 'title': current_article, 'content': ' '.join(current_article_content)})
-    if current_chapter and current_chapter != "Uncategorized":
+    if current_chapter and current_chapter_content:
         chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
 
     return chapters, articles
