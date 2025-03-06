@@ -24,19 +24,32 @@ index = pc.Index(index_name)
 # Initialize sentence transformer model
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Regex patterns for Chapters & Articles
-chapter_pattern = r'^(Chapter (\d+|[A-Za-z]+)):.*$'
-article_pattern = r'^(Article (\d+|[A-Za-z]+)):.*$'
+# Function to extract and chunk text from PDF
+def extract_text_from_pdf(pdf_path):
+    with open(pdf_path, "rb") as f:
+        reader = PyPDF2.PdfReader(f)
+        text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+    return text
 
-def list_stored_pdfs():
-    return ["Basic Law Governance.pdf", "Law of the Consultative Council.pdf", "Law of the Council of Ministers.pdf"]
+# Function to chunk text into smaller passages
+def chunk_text(text, chunk_size=500):
+    words = text.split()
+    return [" ".join(words[i:i+chunk_size]) for i in range(0, len(words), chunk_size)]
+
+# Function to store chunks in Pinecone
+def store_chunks_in_pinecone(chunks):
+    vectors = []
+    for i, chunk in enumerate(chunks):
+        embedding = model.encode(chunk).tolist()
+        vectors.append({"id": f"chunk_{i}", "values": embedding, "metadata": {"text": chunk}})
+    index.upsert(vectors=vectors)
 
 # Streamlit UI
 st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk for Saudi Arabia</h1>", unsafe_allow_html=True)
 
 # Sidebar for stored PDFs
 st.sidebar.header("📂 Stored PDFs")
-pdf_list = list_stored_pdfs()
+pdf_list = ["Basic Law Governance.pdf", "Law of the Consultative Council.pdf", "Law of the Council of Ministers.pdf"]
 if pdf_list:
     with st.sidebar.expander("📜 View Stored PDFs", expanded=False):
         for pdf in pdf_list:
@@ -54,6 +67,12 @@ if pdf_source == "Upload from PC":
         with open(temp_pdf_path, "wb") as f:
             f.write(uploaded_file.read())
         st.success("PDF uploaded successfully!")
+        
+        # Process and store in Pinecone
+        extracted_text = extract_text_from_pdf(temp_pdf_path)
+        text_chunks = chunk_text(extracted_text)
+        store_chunks_in_pinecone(text_chunks)
+        st.success("PDF content has been processed and stored in Pinecone!")
 else:
     selected_pdf = st.selectbox("Choose from stored documents", pdf_list, key="stored_pdf")
 
