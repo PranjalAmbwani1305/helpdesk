@@ -12,7 +12,8 @@ PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 index_name = "helpdesk"
 
 # Initialize Pinecone
-pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
+from pinecone import Pinecone
+pc = Pinecone(api_key=PINECONE_API_KEY)
 index = pc.Index(index_name)
 
 # Initialize sentence transformer model
@@ -29,39 +30,33 @@ def process_pdf(pdf_path):
         text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
     
     chapters, articles = [], []
-    current_chapter, current_chapter_number, current_chapter_content = "Uncategorized", None, []
-    current_article, current_article_number, current_article_content = None, None, []
+    current_chapter, current_chapter_content = "Uncategorized", []
+    current_article, current_article_content = None, []
 
     paragraphs = text.split('\n')
 
     for para in paragraphs:
         para = para.strip()
 
-        # Detect Chapters (e.g., "Chapter 3: General Principles")
+        # Detect Chapters (e.g., "Chapter One: General Principles")
         chapter_match = re.match(chapter_pattern, para)
         if chapter_match:
             if current_chapter != "Uncategorized":
-                chapters.append({
-                    'title': current_chapter,
-                    'chapter_number': current_chapter_number,
-                    'content': ' '.join(current_chapter_content)
-                })
+                chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
             current_chapter = para
-            current_chapter_number = chapter_match.group(2)  # Store chapter number
             current_chapter_content = []
         
-        # Detect Articles (e.g., "Article 1: Rights of Individuals")
+        # Detect Articles (e.g., "Article 1:")
         article_match = re.match(article_pattern, para)
         if article_match:
             if current_article:
                 articles.append({
-                    'chapter': current_chapter,
-                    'title': current_article,
-                    'article_number': current_article_number,
+                    'chapter': current_chapter, 
+                    'title': current_article, 
+                    'article_number': article_match.group(2), 
                     'content': ' '.join(current_article_content)
                 })
             current_article = para
-            current_article_number = article_match.group(2)  # Store article number
             current_article_content = []
         
         # Add content to current section
@@ -74,17 +69,13 @@ def process_pdf(pdf_path):
     # Append last detected sections
     if current_article:
         articles.append({
-            'chapter': current_chapter,
-            'title': current_article,
-            'article_number': current_article_number,
+            'chapter': current_chapter, 
+            'title': current_article, 
+            'article_number': article_match.group(2), 
             'content': ' '.join(current_article_content)
         })
     if current_chapter and current_chapter != "Uncategorized":
-        chapters.append({
-            'title': current_chapter,
-            'chapter_number': current_chapter_number,
-            'content': ' '.join(current_chapter_content)
-        })
+        chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
 
     return chapters, articles
 
@@ -94,10 +85,10 @@ def store_vectors(chapters, articles, pdf_name):
         chapter_vector = model.encode(chapter['content']).tolist()
         index.upsert([
             (f"{pdf_name}-chapter-{i}", chapter_vector, {
-                "pdf_name": pdf_name,
-                "chapter_number": chapter['chapter_number'],
-                "text": chapter['content'],
-                "type": "chapter"
+                "pdf_name": pdf_name, 
+                "text": chapter['content'], 
+                "type": "chapter",
+                "chapter_title": chapter['title']
             })
         ])
 
@@ -105,11 +96,11 @@ def store_vectors(chapters, articles, pdf_name):
         article_vector = model.encode(article['content']).tolist()
         index.upsert([
             (f"{pdf_name}-article-{i}", article_vector, {
-                "pdf_name": pdf_name,
-                "chapter_number": article['chapter'],
-                "article_number": article['article_number'],
-                "text": article['content'],
-                "type": "article"
+                "pdf_name": pdf_name, 
+                "chapter": article['chapter'], 
+                "text": article['content'], 
+                "type": "article",
+                "article_number": article['article_number']
             })
         ])
 
@@ -117,16 +108,14 @@ def store_vectors(chapters, articles, pdf_name):
 def query_vectors(query, selected_pdf):
     try:
         vector = model.encode(query).tolist()
-        
-        # Check if user queries a specific chapter
-        chapter_match = re.search(r'chapter\s*(\d+)', query, re.IGNORECASE)
-        filter_query = {"pdf_name": {"$eq": selected_pdf}}
-        
-        if chapter_match:
-            chapter_number = chapter_match.group(1)
-            filter_query["chapter_number"] = {"$eq": chapter_number}
+        filters = {"pdf_name": {"$eq": selected_pdf}}
 
-        results = index.query(vector=vector, top_k=5, include_metadata=True, filter=filter_query)
+        # Check if user is looking for a specific chapter
+        chapter_match = re.search(r'Chapter (\d+|[A-Za-z]+)', query, re.IGNORECASE)
+        if chapter_match:
+            filters["chapter_title"] = {"$eq": chapter_match.group(0)}
+
+        results = index.query(vector=vector, top_k=5, include_metadata=True, filter=filters)
         
         if results["matches"]:
             matched_texts = []
@@ -136,11 +125,9 @@ def query_vectors(query, selected_pdf):
                 section_text = match["metadata"]["text"]
                 
                 if section_type == "chapter":
-                    matched_texts.append(f"**Chapter {match['metadata']['chapter_number']}:** {section_text}")
+                    matched_texts.append(f"**{match['metadata']['chapter_title']}**\n{section_text}")
                 elif section_type == "article":
-                    chapter_name = match["metadata"].get("chapter_number", "Uncategorized")
-                    article_number = match["metadata"].get("article_number", "Unknown")
-                    matched_texts.append(f"**Chapter {chapter_name} - Article {article_number}:**\n{section_text}")
+                    matched_texts.append(f"**{match['metadata']['chapter']} - Article {match['metadata']['article_number']}**\n{section_text}")
             
             return "\n\n".join(matched_texts)
         else:
@@ -156,7 +143,8 @@ pdf_source = st.radio("Select PDF Source", ("Upload from PC", "Choose from Docum
 
 if pdf_source == "Upload from PC":
     uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
-    if uploaded_file:
+    
+    if uploaded_file is not None:
         temp_pdf_path = f"temp_{uploaded_file.name}"
         with open(temp_pdf_path, "wb") as f:
             f.write(uploaded_file.read())
@@ -164,12 +152,19 @@ if pdf_source == "Upload from PC":
         # Process PDF to extract chapters & articles
         chapters, articles = process_pdf(temp_pdf_path)
 
+        # Debugging - Check if extraction worked
+        st.write(f"Extracted {len(chapters)} Chapters and {len(articles)} Articles.")
+
         # Store extracted sections in Pinecone
         store_vectors(chapters, articles, uploaded_file.name)
 
         st.success("PDF uploaded and processed successfully!")
 else:
-    st.info("Document Storage feature is currently unavailable.")
+    stored_files = ["legal_doc1.pdf", "legal_doc2.pdf"]  # Mock list of stored PDFs
+    selected_file = st.selectbox("Select a stored PDF:", stored_files)
+
+    if selected_file:
+        st.success(f"Using stored document: {selected_file}")
 
 # Language Selection
 input_language = st.selectbox("Choose Input Language", ("English", "Arabic"))
@@ -179,8 +174,10 @@ response_language = st.selectbox("Choose Response Language", ("English", "Arabic
 query = st.text_input("Ask a legal question:")
 
 if st.button("Get Answer"):
-    if query and uploaded_file:
-        response = query_vectors(query, uploaded_file.name)
+    selected_pdf = uploaded_file.name if uploaded_file is not None else selected_file
+    
+    if query and selected_pdf:
+        response = query_vectors(query, selected_pdf)
         st.write(f"**Answer:** {response}")
     else:
-        st.warning("Please upload a PDF and enter a query.")
+        st.warning("Please upload a PDF or select a stored document and enter a query.")
