@@ -76,16 +76,18 @@ def store_vectors(chapters, articles, pdf_name):
         )])
 
 def query_vectors(query, selected_pdf):
-    """Queries Pinecone for the most relevant result, prioritizing exact article matches."""
+    """Queries Pinecone for the most relevant result."""
     query_vector = model.encode(query).tolist()
     
-    # Exact search for Article 1
-    if "article 1" in query.lower() or "article one" in query.lower():
-        results = index.query(vector=query_vector, top_k=1, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}, "type": {"$eq": "article"}, "title": {"$eq": "Article 1"}})
+    # Query for a specific article if mentioned in the query
+    article_match = re.search(r'Article (\d+|[A-Za-z]+)', query)
+    if article_match:
+        article_number = article_match.group(1)
+        results = index.query(vector=query_vector, top_k=1, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}, "type": {"$eq": "article"}, "title": {"$eq": f"Article {article_number}"}})
         if results and results["matches"]:
             return results["matches"][0]["metadata"]["text"]
     
-    # Generic query for other articles or chapters
+    # Generic query for other articles or chapters if no article is mentioned
     results = index.query(vector=query_vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
     
     if results and results["matches"]:
