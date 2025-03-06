@@ -25,25 +25,20 @@ article_pattern = r'^(Article (\d+|[A-Za-z]+)):.*$'
 
 # Function to fetch stored PDFs
 def get_stored_pdfs():
-    storage_folder = "document_storage"  # Define storage folder
+    storage_folder = "document_storage"
     if not os.path.exists(storage_folder):
-        os.makedirs(storage_folder)  # Create folder if it doesn't exist
+        os.makedirs(storage_folder)
     return [file for file in os.listdir(storage_folder) if file.endswith(".pdf")]
-
-# Function to clean extracted text
-def clean_text(text):
-    """Removes unnecessary spaces, special characters, and unwanted text like 'PDFm yURL'"""
-    text = re.sub(r"\s+", " ", text)  # Remove excessive spaces
-    text = re.sub(r"PDFm yURL.*?quickly", "", text, flags=re.IGNORECASE)  # Remove junk chunks
-    return text.strip()
 
 # Function to process PDF and extract Chapters & Articles
 def process_pdf(pdf_path):
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
         text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
-    
-    text = clean_text(text)  # Clean extracted text
+
+    # **Filter out website-related text**
+    text = re.sub(r"PDFmyURL.*?quickly", "", text, flags=re.DOTALL)
+
     chapters, articles = [], []
     current_chapter, current_chapter_content = "Uncategorized", []
     current_article, current_article_content = None, []
@@ -99,7 +94,7 @@ def store_vectors(chapters, articles, pdf_name):
             (f"{pdf_name}-article-{i}", article_vector, {
                 "pdf_name": pdf_name, 
                 "chapter": article['chapter'], 
-                "article_number": article['article_number'],  # Store article number
+                "article_number": article['article_number'],  
                 "text": article['content'], 
                 "type": "article"
             })
@@ -116,7 +111,7 @@ def query_vectors(query, selected_pdf):
             
             for match in results["matches"]:
                 section_type = match["metadata"]["type"]
-                section_text = clean_text(match["metadata"]["text"])  # Clean retrieved text
+                section_text = match["metadata"]["text"]
                 
                 if section_type == "chapter":
                     matched_texts.append(f"**Chapter:** {section_text}")
@@ -125,7 +120,12 @@ def query_vectors(query, selected_pdf):
                     article_number = match["metadata"].get("article_number", "Unknown")
                     matched_texts.append(f"**{chapter_name} - Article {article_number}**\n{section_text}")
             
-            return "\n\n".join(matched_texts)
+            # **Ensure only relevant Article is returned**
+            if query.lower().startswith("article"):
+                article_number = query.split()[-1]  # Extract the article number from the query
+                matched_texts = [text for text in matched_texts if f"Article {article_number}" in text]
+            
+            return "\n\n".join(matched_texts) if matched_texts else "No relevant information found."
         else:
             return "No relevant information found in the selected document."
     except Exception as e:
@@ -137,7 +137,7 @@ st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk</h1>", un
 # PDF Source Selection
 pdf_source = st.radio("Select PDF Source", ("Upload from PC", "Choose from Document Storage"))
 
-selected_file = None  # Initialize selected file variable
+selected_file = None  
 
 if pdf_source == "Upload from PC":
     uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
@@ -146,14 +146,11 @@ if pdf_source == "Upload from PC":
         with open(temp_pdf_path, "wb") as f:
             f.write(uploaded_file.read())
         
-        # Process PDF to extract chapters & articles
         chapters, articles = process_pdf(temp_pdf_path)
-
-        # Store extracted sections in Pinecone
         store_vectors(chapters, articles, uploaded_file.name)
 
         st.success("PDF uploaded and processed successfully!")
-        selected_file = uploaded_file.name  # Assign selected file name
+        selected_file = uploaded_file.name  
 
 elif pdf_source == "Choose from Document Storage":
     stored_pdfs = get_stored_pdfs()
