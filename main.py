@@ -3,23 +3,21 @@ import pinecone
 import PyPDF2
 import os
 import json
+import re
 from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
-import re
 
 # Load environment variables for Pinecone API key
 load_dotenv()
-
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 index_name = "helpdesk"
 
+# Initialize Pinecone
 from pinecone import Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
-
-# Initialize Pinecone index
 index = pc.Index(index_name)
 
-# Initialize sentence transformer model
+# Initialize SentenceTransformer model
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
 # File to store uploaded PDFs persistently
@@ -37,8 +35,7 @@ def save_uploaded_pdfs(pdf_list):
 
 uploaded_pdfs = load_uploaded_pdfs()
 
-# Function to process PDF, extract chapters and articles
-
+# Function to process PDF, extract chapters, articles, and content
 def process_pdf(pdf_path, pdf_name):
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
@@ -59,20 +56,32 @@ def process_pdf(pdf_path, pdf_name):
         
         if re.match(chapter_pattern, para):
             if current_article:
-                sections.append({"chapter": current_chapter, "article": current_article, "content": " ".join(current_content)})
+                sections.append({
+                    "chapter": current_chapter, 
+                    "article": current_article, 
+                    "content": " ".join(current_content)
+                })
             current_chapter = para
             current_article = None
             current_content = []
         elif re.match(article_pattern, para):
             if current_article:
-                sections.append({"chapter": current_chapter, "article": current_article, "content": " ".join(current_content)})
+                sections.append({
+                    "chapter": current_chapter, 
+                    "article": current_article, 
+                    "content": " ".join(current_content)
+                })
             current_article = para
             current_content = []
         else:
             current_content.append(para)
     
     if current_article:
-        sections.append({"chapter": current_chapter, "article": current_article, "content": " ".join(current_content)})
+        sections.append({
+            "chapter": current_chapter, 
+            "article": current_article, 
+            "content": " ".join(current_content)
+        })
     
     return sections
 
@@ -86,11 +95,31 @@ def store_vectors(sections, pdf_name):
         content_vector = model.encode(content).tolist()
         
         index.upsert([
-            (f"{pdf_name}-section-{i}-title", title_vector, {"pdf_name": pdf_name, "chapter": section['chapter'], "article": section['article'], "text": title, "type": "title"}),
-            (f"{pdf_name}-section-{i}-content", content_vector, {"pdf_name": pdf_name, "chapter": section['chapter'], "article": section['article'], "text": content, "type": "content"})
+            (
+                f"{pdf_name}-section-{i}-title",
+                title_vector, 
+                {
+                    "pdf_name": pdf_name,
+                    "chapter": section['chapter'],
+                    "article": section['article'],
+                    "text": title,
+                    "type": "title"
+                }
+            ),
+            (
+                f"{pdf_name}-section-{i}-content",
+                content_vector, 
+                {
+                    "pdf_name": pdf_name,
+                    "chapter": section['chapter'],
+                    "article": section['article'],
+                    "text": content,
+                    "type": "content"
+                }
+            )
         ])
 
-# Function to query vectors from Pinecone
+# Function to query Pinecone
 def query_vectors(query, selected_pdf):
     vector = model.encode(query).tolist()
     results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
@@ -98,7 +127,8 @@ def query_vectors(query, selected_pdf):
     if results["matches"]:
         response_text = ""
         for match in results["matches"]:
-            response_text += f"**{match['metadata']['chapter']} - {match['metadata']['article']}:**\n{match['metadata']['text']}\n\n"
+            metadata = match["metadata"]
+            response_text += f"**{metadata['chapter']} - {metadata['article']}:**\n{metadata['text']}\n\n"
         return response_text
     return "No relevant information found in the selected document."
 
