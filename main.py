@@ -20,7 +20,7 @@ index = pc.Index(index_name)
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
 # Function to process PDF and extract structured articles
-def process_pdf(pdf_path, chunk_size=500):
+def process_pdf(pdf_path):
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
         text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
@@ -49,7 +49,7 @@ def process_pdf(pdf_path, chunk_size=500):
                     "article_title": current_article_title,
                     "content": " ".join(current_content)
                 })
-            current_chapter = chapter_match.group(1)  # Store chapter name
+            current_chapter = chapter_match.group(1)
             current_article_number = None
             current_content = []
             continue
@@ -86,22 +86,18 @@ def process_pdf(pdf_path, chunk_size=500):
 
 # Function to store extracted articles in Pinecone
 def store_vectors(sections, pdf_name):
-    for i, section in enumerate(sections):
+    for section in sections:
         chapter = section["chapter"]
         article_number = section["article_number"]
         article_title = section["article_title"]
         content = section["content"]
 
-        title_vector = model.encode(article_number + " " + article_title).tolist()
-        content_vector = model.encode(content).tolist()
+        vector = model.encode(article_number + " " + article_title + " " + content).tolist()
 
-        # Store title and content vectors with proper metadata
         index.upsert([
-            (f"{pdf_name}-chapter-{chapter}-article-{article_number}-title", title_vector,
-             {"pdf_name": pdf_name, "chapter": chapter, "article_number": article_number, "text": article_title, "type": "title"}),
-
-            (f"{pdf_name}-chapter-{chapter}-article-{article_number}-content", content_vector,
-             {"pdf_name": pdf_name, "chapter": chapter, "article_number": article_number, "text": content, "type": "content"})
+            (f"{pdf_name}-chapter-{chapter}-article-{article_number}", vector,
+             {"pdf_name": pdf_name, "chapter": chapter, "article_number": article_number, 
+              "article_title": article_title, "content": content})
         ])
 
 # Function to query vectors from Pinecone
@@ -111,31 +107,20 @@ def query_vectors(query, selected_pdf):
         results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
 
         if results["matches"]:
-            article_dict = {}
-
+            response_text = ""
             for match in results["matches"]:
                 metadata = match["metadata"]
-                item_type = metadata["type"]
-                article_number = metadata.get("article_number", "Unknown")
-                chapter = metadata.get("chapter", "Unknown")
+                chapter = metadata.get("chapter", "Unknown Chapter")
+                article_number = metadata.get("article_number", "Unknown Article")
+                article_title = metadata.get("article_title", "")
+                content = metadata.get("content", "")
 
-                if item_type == "title":
-                    article_dict[article_number] = {"title": metadata["text"], "content": ""}
-                elif item_type == "content":
-                    if article_number in article_dict:
-                        article_dict[article_number]["content"] = metadata["text"]
-                    else:
-                        article_dict[article_number] = {"title": "", "content": metadata["text"]}
-
-            # Prepare final response
-            response_text = ""
-            for article_num, article_data in article_dict.items():
-                response_text += f"**{chapter} - {article_num}: {article_data['title']}**\n{article_data['content']}\n\n"
+                response_text += f"**{chapter} - {article_number}: {article_title}**\n{content}\n\n"
 
             return response_text if response_text else "No relevant information found in the selected document."
         else:
             return "No relevant information found in the selected document."
-    
+
     except Exception as e:
         return f"Error during query: {e}"
 
