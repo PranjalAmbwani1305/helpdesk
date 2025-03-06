@@ -7,18 +7,24 @@ import re
 from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
 
-# Load environment variables for Pinecone API key
+# Load environment variables
 load_dotenv()
 
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 INDEX_NAME = "helpdesk"
+PINECONE_ENV = "us-east-1"
 
 # Initialize Pinecone
-pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
+pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
 
-index = pc.Index(INDEX_NAME)
+# Check if the index exists, else create it
+if INDEX_NAME not in pinecone.list_indexes():
+    pinecone.create_index(name=INDEX_NAME, dimension=384, metric="cosine")
 
-# Initialize sentence transformer model
+# Connect to Pinecone index
+index = pinecone.Index(INDEX_NAME)
+
+# Initialize Sentence Transformer model
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
 # File to store uploaded PDFs persistently
@@ -57,39 +63,27 @@ def process_pdf(pdf_path, pdf_name):
         
         if re.match(chapter_pattern, para):
             if current_article:
-                sections.append({
-                    "chapter": current_chapter,
-                    "article": current_article,
-                    "content": " ".join(current_content)
-                })
+                sections.append({"chapter": current_chapter, "article": current_article, "content": " ".join(current_content)})
             current_chapter = para
             current_article = None
             current_content = []
-        
         elif re.match(article_pattern, para):
             if current_article:
-                sections.append({
-                    "chapter": current_chapter,
-                    "article": current_article,
-                    "content": " ".join(current_content)
-                })
+                sections.append({"chapter": current_chapter, "article": current_article, "content": " ".join(current_content)})
             current_article = para
             current_content = []
-        
         else:
             current_content.append(para)
     
     if current_article:
-        sections.append({
-            "chapter": current_chapter,
-            "article": current_article,
-            "content": " ".join(current_content)
-        })
+        sections.append({"chapter": current_chapter, "article": current_article, "content": " ".join(current_content)})
     
     return sections
 
 # Function to store vectors in Pinecone
 def store_vectors(sections, pdf_name):
+    vectors = []
+    
     for i, section in enumerate(sections):
         title = f"{section['chapter']} - {section['article']}"
         content = section['content']
@@ -97,25 +91,25 @@ def store_vectors(sections, pdf_name):
         title_vector = model.encode(title).tolist()
         content_vector = model.encode(content).tolist()
         
-        # Debugging logs
-        print(f"Upserting: {pdf_name}-section-{i}")
-        
-        index.upsert([
-            (f"{pdf_name}-section-{i}-title", title_vector, {
-                "pdf_name": pdf_name,
-                "chapter": section['chapter'],
-                "article": section['article'],
-                "text": title,
-                "type": "title"
-            }),
-            (f"{pdf_name}-section-{i}-content", content_vector, {
-                "pdf_name": pdf_name,
-                "chapter": section['chapter'],
-                "article": section['article'],
-                "text": content,
-                "type": "content"
-            })
-        ])
+        vectors.append((f"{pdf_name}-section-{i}-title", title_vector, {
+            "pdf_name": pdf_name,
+            "chapter": section['chapter'],
+            "article": section['article'],
+            "text": title,
+            "type": "title"
+        }))
+        vectors.append((f"{pdf_name}-section-{i}-content", content_vector, {
+            "pdf_name": pdf_name,
+            "chapter": section['chapter'],
+            "article": section['article'],
+            "text": content,
+            "type": "content"
+        }))
+
+    if vectors:
+        print(f"Upserting {len(vectors)} vectors to Pinecone...")
+        index.upsert(vectors)
+        print("Upsert complete!")
 
 # Function to query vectors from Pinecone
 def query_vectors(query, selected_pdf):
