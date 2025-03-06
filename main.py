@@ -2,43 +2,40 @@ import streamlit as st
 import pinecone
 import PyPDF2
 import os
-import json
-import re
 from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
+import re
 
-# Load environment variables
+# Load environment variables for Pinecone API key
 load_dotenv()
 
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 INDEX_NAME = "helpdesk"
-PINECONE_ENV = "us-east-1"
 
 # Initialize Pinecone
-pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
+from pinecone import Pinecone
+pc = Pinecone(api_key=PINECONE_API_KEY)
 
-# Check if the index exists, else create it
-if INDEX_NAME not in pinecone.list_indexes():
-    pinecone.create_index(name=INDEX_NAME, dimension=384, metric="cosine")
+if INDEX_NAME not in pc.list_indexes().names():
+    pc.create_index(name=INDEX_NAME, dimension=384, metric="cosine")
 
-# Connect to Pinecone index
-index = pinecone.Index(INDEX_NAME)
+index = pc.Index(INDEX_NAME)
 
-# Initialize Sentence Transformer model
+# Initialize sentence transformer model
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
 # File to store uploaded PDFs persistently
-PDF_STORAGE_FILE = "uploaded_pdfs.json"
+PDF_STORAGE_FILE = "uploaded_pdfs.txt"
 
 def load_uploaded_pdfs():
     if os.path.exists(PDF_STORAGE_FILE):
         with open(PDF_STORAGE_FILE, "r") as f:
-            return json.load(f)
+            return f.read().splitlines()
     return []
 
 def save_uploaded_pdfs(pdf_list):
     with open(PDF_STORAGE_FILE, "w") as f:
-        json.dump(pdf_list, f)
+        f.write("\n".join(pdf_list))
 
 uploaded_pdfs = load_uploaded_pdfs()
 
@@ -46,7 +43,7 @@ uploaded_pdfs = load_uploaded_pdfs()
 def process_pdf(pdf_path, pdf_name):
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
-        text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+        text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
     
     sections = []
     current_chapter = None
@@ -83,7 +80,6 @@ def process_pdf(pdf_path, pdf_name):
 # Function to store vectors in Pinecone
 def store_vectors(sections, pdf_name):
     vectors = []
-    
     for i, section in enumerate(sections):
         title = f"{section['chapter']} - {section['article']}"
         content = section['content']
@@ -91,25 +87,10 @@ def store_vectors(sections, pdf_name):
         title_vector = model.encode(title).tolist()
         content_vector = model.encode(content).tolist()
         
-        vectors.append((f"{pdf_name}-section-{i}-title", title_vector, {
-            "pdf_name": pdf_name,
-            "chapter": section['chapter'],
-            "article": section['article'],
-            "text": title,
-            "type": "title"
-        }))
-        vectors.append((f"{pdf_name}-section-{i}-content", content_vector, {
-            "pdf_name": pdf_name,
-            "chapter": section['chapter'],
-            "article": section['article'],
-            "text": content,
-            "type": "content"
-        }))
-
-    if vectors:
-        print(f"Upserting {len(vectors)} vectors to Pinecone...")
-        index.upsert(vectors)
-        print("Upsert complete!")
+        vectors.append((f"{pdf_name}-section-{i}-title", title_vector, {"pdf_name": pdf_name, "chapter": section['chapter'], "article": section['article'], "text": title, "type": "title"}))
+        vectors.append((f"{pdf_name}-section-{i}-content", content_vector, {"pdf_name": pdf_name, "chapter": section['chapter'], "article": section['article'], "text": content, "type": "content"}))
+    
+    index.upsert(vectors)
 
 # Function to query vectors from Pinecone
 def query_vectors(query, selected_pdf):
@@ -162,4 +143,3 @@ if st.button("Get Answer"):
         st.write(f"**Answer:** {response}")
     else:
         st.warning("Please upload a PDF and enter a query.")
-
