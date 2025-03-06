@@ -2,20 +2,26 @@ import streamlit as st
 import pinecone
 import PyPDF2
 import os
+import time
+import json
 from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
 import re
 
 # Load environment variables for Pinecone API key
 load_dotenv()
-
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 INDEX_NAME = "helpdesk"
+
+if not PINECONE_API_KEY:
+    st.error("Pinecone API key is missing. Please check your .env file.")
+    st.stop()
 
 # Initialize Pinecone
 from pinecone import Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
 
+# Check if index exists, if not, create it
 if INDEX_NAME not in pc.list_indexes().names():
     pc.create_index(name=INDEX_NAME, dimension=384, metric="cosine")
 
@@ -28,19 +34,21 @@ model = SentenceTransformer("all-MiniLM-L6-v2")
 PDF_STORAGE_FILE = "uploaded_pdfs.txt"
 
 def load_uploaded_pdfs():
+    """Load list of previously uploaded PDFs from file."""
     if os.path.exists(PDF_STORAGE_FILE):
         with open(PDF_STORAGE_FILE, "r") as f:
             return f.read().splitlines()
     return []
 
 def save_uploaded_pdfs(pdf_list):
+    """Save the list of uploaded PDFs to file."""
     with open(PDF_STORAGE_FILE, "w") as f:
         f.write("\n".join(pdf_list))
 
 uploaded_pdfs = load_uploaded_pdfs()
 
-# Function to process PDF, extract chapters and articles
 def process_pdf(pdf_path, pdf_name):
+    """Extract chapters and articles from a PDF file."""
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
         text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
@@ -77,8 +85,8 @@ def process_pdf(pdf_path, pdf_name):
     
     return sections
 
-# Function to store vectors in Pinecone
 def store_vectors(sections, pdf_name):
+    """Store extracted sections as embeddings in Pinecone."""
     vectors = []
     for i, section in enumerate(sections):
         title = f"{section['chapter']} - {section['article']}"
@@ -89,11 +97,18 @@ def store_vectors(sections, pdf_name):
         
         vectors.append((f"{pdf_name}-section-{i}-title", title_vector, {"pdf_name": pdf_name, "chapter": section['chapter'], "article": section['article'], "text": title, "type": "title"}))
         vectors.append((f"{pdf_name}-section-{i}-content", content_vector, {"pdf_name": pdf_name, "chapter": section['chapter'], "article": section['article'], "text": content, "type": "content"}))
-    
-    index.upsert(vectors)
 
-# Function to query vectors from Pinecone
+    # Store in Pinecone in smaller chunks
+    BATCH_SIZE = 100
+    for i in range(0, len(vectors), BATCH_SIZE):
+        batch = vectors[i:i + BATCH_SIZE]
+        index.upsert(batch)
+        time.sleep(1)  # Prevent rate limits
+
+    print(f"Stored {len(vectors)} vectors in Pinecone.")
+
 def query_vectors(query, selected_pdf):
+    """Retrieve the most relevant results from Pinecone based on the query."""
     vector = model.encode(query).tolist()
     results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
     
@@ -121,13 +136,16 @@ if pdf_source == "Upload from PC":
             f.write(uploaded_file.read())
         
         sections = process_pdf(temp_pdf_path, uploaded_file.name)
-        store_vectors(sections, uploaded_file.name)
         
-        if uploaded_file.name not in uploaded_pdfs:
-            uploaded_pdfs.append(uploaded_file.name)
-            save_uploaded_pdfs(uploaded_pdfs)
-        
-        st.success("PDF uploaded and processed!")
+        if sections:
+            store_vectors(sections, uploaded_file.name)
+            if uploaded_file.name not in uploaded_pdfs:
+                uploaded_pdfs.append(uploaded_file.name)
+                save_uploaded_pdfs(uploaded_pdfs)
+            st.success("PDF uploaded and processed!")
+        else:
+            st.error("No valid sections found in the PDF.")
+
 else:
     st.info("Document Storage feature is currently unavailable.")
 
@@ -139,7 +157,10 @@ response_language = st.selectbox("Choose Response Language", ("English", "Arabic
 query = st.text_input("Ask a legal question:")
 if st.button("Get Answer"):
     if query:
-        response = query_vectors(query, selected_pdf if selected_pdf != "No PDFs uploaded" else "")
-        st.write(f"**Answer:** {response}")
+        if selected_pdf and selected_pdf != "No PDFs uploaded":
+            response = query_vectors(query, selected_pdf)
+            st.write(f"**Answer:** {response}")
+        else:
+            st.warning("Please upload a PDF first.")
     else:
-        st.warning("Please upload a PDF and enter a query.")
+        st.warning("Please enter a query.")
