@@ -1,139 +1,79 @@
 import streamlit as st
+from langchain.document_loaders import PyPDFLoader
+from langchain.text_splitter import CharacterTextSplitter
+from langchain.embeddings import OpenAIEmbeddings
+from langchain.vectorstores import Pinecone
 import pinecone
-import PyPDF2
+from langchain.chains.question_answering import load_qa_chain
+from langchain.chains import AnalyzeDocumentChain
+from langchain.agents import initialize_agent, Tool, AgentType
+from langchain.agents import create_openai_functions_agent
+from langchain.llms import OpenAI
+import openai
 import os
-import re
-from deep_translator import GoogleTranslator
-from sentence_transformers import SentenceTransformer
+import pinecone
 
-# Initialize Pinecone
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
-index_name = "helpdesk"
-index = pc.Index(index_name)
+# Initialize OpenAI API Key
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# Load Hugging Face Model
-model = SentenceTransformer("all-MiniLM-L6-v2")
+# Setup Pinecone
+pinecone.init(api_key=os.getenv("PINECONE_API_KEY"), environment="us-west1-gcp")
+index_name = "law-database"  # Update with your actual Pinecone index name
 
-# Regex patterns for Chapters & Articles
-chapter_pattern = r'^(Chapter (\d+|[A-Za-z]+)):.*$'
-article_pattern = r'^(Article (\d+|[A-Za-z]+)):.*$'
-
-def extract_text_from_pdf(pdf_path):
-    """Extracts and structures text from the PDF."""
-    with open(pdf_path, "rb") as file:
-        reader = PyPDF2.PdfReader(file)
-        text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+# Load and process the uploaded PDF
+def process_pdf(file):
+    # Use PyPDFLoader to load PDF
+    loader = PyPDFLoader(file)
+    pages = loader.load_and_split()
     
-    chapters, articles = [], []
-    current_chapter, current_chapter_content = "Uncategorized", []
-    current_article, current_article_content = None, []
-    paragraphs = text.split('\n')
+    # Split text into manageable chunks for vectorization
+    text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
+    documents = text_splitter.split_documents(pages)
+
+    return documents
+
+# Initialize vector store (Pinecone)
+def create_pinecone_vector_store(documents):
+    embeddings = OpenAIEmbeddings()
+    docsearch = Pinecone.from_documents(documents, embeddings, index_name=index_name)
+    return docsearch
+
+# Handle user question
+def get_answer(query, docsearch):
+    # Perform the search
+    results = docsearch.similarity_search(query)
     
-    for para in paragraphs:
-        para = para.strip()
-        
-        if re.match(chapter_pattern, para):
-            if current_chapter != "Uncategorized":
-                chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
-            current_chapter = para
-            current_chapter_content = []
-        
-        article_match = re.match(article_pattern, para)
-        if article_match:
-            if current_article:
-                articles.append({'chapter': current_chapter, 'title': current_article, 'content': ' '.join(current_article_content)})
-            current_article = article_match.group(1)
-            current_article_content = []
-        else:
-            if current_article:
-                current_article_content.append(para)
-            else:
-                current_chapter_content.append(para)
-
-    if current_article:
-        articles.append({'chapter': current_chapter, 'title': current_article, 'content': ' '.join(current_article_content)})
-    if current_chapter and current_chapter != "Uncategorized":
-        chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
+    # Load the QA chain
+    qa_chain = load_qa_chain(OpenAI(), chain_type="stuff")
+    response = qa_chain.run(input_documents=results, question=query)
     
-    return chapters, articles
+    return response
 
-def store_vectors(chapters, articles, pdf_name):
-    """Stores extracted chapters and articles in Pinecone."""
-    for i, chapter in enumerate(chapters):
-        chapter_vector = model.encode(chapter['content']).tolist()
-        index.upsert([(
-            f"{pdf_name}-chapter-{i}", chapter_vector, 
-            {"pdf_name": pdf_name, "text": chapter['content'], "type": "chapter"}
-        )])
+def main():
+    # Streamlit interface
+    st.title("AI-Powered Legal HelpDesk")
+
+    # Upload PDF
+    uploaded_file = st.file_uploader("Upload your Legal Document (PDF)", type="pdf")
     
-    for i, article in enumerate(articles):
-        # Debugging: Print extracted article content
-        st.write(f"Storing Article {article['title']}: {article['content'][:200]}...")  # Show first 200 characters for verification
-        
-        article_vector = model.encode(article['content']).tolist()
-        index.upsert([(
-            f"{pdf_name}-article-{i}", article_vector, 
-            {"pdf_name": pdf_name, "chapter": article['chapter'], "text": article['content'], "type": "article"}
-        )])
-
-def query_vectors(query, selected_pdf):
-    """Queries Pinecone for the most relevant result, prioritizing exact article matches."""
-    query_vector = model.encode(query).tolist()
-    
-    # Exact search for Article 1
-    if "article 1" in query.lower() or "article one" in query.lower():
-        results = index.query(vector=query_vector, top_k=1, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}, "type": {"$eq": "article"}, "title": {"$eq": "Article 1"}})
-        if results and results["matches"]:
-            return results["matches"][0]["metadata"]["text"]
-    
-    # Generic query for other articles or chapters
-    results = index.query(vector=query_vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
-    
-    if results and results["matches"]:
-        return "\n\n".join([match["metadata"]["text"] for match in results["matches"]])
-    return "No relevant answer found."
-
-def translate_text(text, target_lang):
-    """Translates text using GoogleTranslator."""
-    return GoogleTranslator(source="auto", target=target_lang).translate(text)
-
-# Streamlit UI
-st.title("AI-Powered Legal HelpDesk")
-
-# PDF Source Selection
-pdf_source = st.radio("Select PDF Source", ["Upload from PC", "Choose from Document Storage"], index=1)
-selected_pdf = None
-
-if pdf_source == "Upload from PC":
-    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
     if uploaded_file is not None:
-        temp_pdf_path = os.path.join("/tmp", uploaded_file.name)
-        with open(temp_pdf_path, "wb") as f:
-            f.write(uploaded_file.read())
+        # Process PDF
+        st.write("Processing PDF...")
+        documents = process_pdf(uploaded_file)
         
-        chapters, articles = extract_text_from_pdf(temp_pdf_path)
-        store_vectors(chapters, articles, uploaded_file.name)
-        selected_pdf = uploaded_file.name
-        st.success("PDF uploaded and processed successfully!")
-else:
-    stored_pdfs = ["Basic Law Governance.pdf", "Law of the Consultative Council.pdf", "Law of the Council of Ministers.pdf"]
-    selected_pdf = st.selectbox("Select a PDF", stored_pdfs)
+        # Create Pinecone vector store
+        docsearch = create_pinecone_vector_store(documents)
+        
+        st.write("PDF Processed. You can now ask your legal questions.")
 
-# Language Selection
-input_lang = st.radio("Choose Input Language", ["English", "Arabic"], index=0)
-response_lang = st.radio("Choose Response Language", ["English", "Arabic"], index=0)
+        # User query
+        user_question = st.text_input("Ask a legal question:")
 
-# Query Input
-query = st.text_input("Ask a legal question:")
+        if user_question:
+            # Get answer
+            st.write("Fetching answer...")
+            answer = get_answer(user_question, docsearch)
+            st.write("Answer:", answer)
 
-if st.button("Get Answer"):
-    if selected_pdf and query:
-        response = query_vectors(query, selected_pdf)
-        if response_lang == "Arabic":
-            response = translate_text(response, "ar")
-            st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
-        else:
-            st.write(f"**Answer:** {response}")
-    else:
-        st.warning("Please upload a PDF and enter a query.")
+if __name__ == "__main__":
+    main()
