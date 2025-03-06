@@ -1,114 +1,108 @@
 import streamlit as st
+import pinecone
 import os
 import PyPDF2
-import torch
-from transformers import AutoTokenizer, AutoModel
 from dotenv import load_dotenv
-from pinecone import Pinecone
+from transformers import AutoTokenizer, AutoModel
+import torch
 
 # Load environment variables
 load_dotenv()
 
+# Pinecone setup
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
-
-# Initialize Pinecone
-pc = Pinecone(api_key=PINECONE_API_KEY)
+pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
-
-# Create index if not exists
-if index_name not in pc.list_indexes().names():
-    pc.create_index(
-        name=index_name,
-        dimension=384,  # Hugging Face MiniLM has 384 dimensions
-        metric="cosine"
-    )
 
 index = pc.Index(index_name)
 
-# Load Hugging Face model
-tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-model = AutoModel.from_pretrained(MODEL_NAME)
+# Load Hugging Face Embedding Model
+tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
+model = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
 
-# Function to get embeddings
 def get_embedding(text):
-    inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True, max_length=512)
+    """Generate embeddings using Hugging Face model."""
+    tokens = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
     with torch.no_grad():
-        outputs = model(**inputs)
-    return outputs.last_hidden_state.mean(dim=1).squeeze().tolist()
+        output = model(**tokens).last_hidden_state.mean(dim=1)
+    return output.numpy().tolist()[0]
 
-# Function to process PDFs into articles and chapters
 def process_pdf(pdf_path):
-    try:
-        with open(pdf_path, "rb") as file:
-            reader = PyPDF2.PdfReader(file)
-            text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
-        
-        # Splitting text into articles and chapters
-        articles = text.split("Article")
-        chapters = text.split("Chapter")
+    """Extract articles and their metadata from the PDF."""
+    with open(pdf_path, "rb") as file:
+        reader = PyPDF2.PdfReader(file)
+        text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
 
-        article_chunks = [f"Article {i}" + art.strip() for i, art in enumerate(articles) if art.strip()]
-        chapter_chunks = [f"Chapter {i}" + ch.strip() for i, ch in enumerate(chapters) if ch.strip()]
+    articles = []
+    current_chapter = "Unknown Chapter"
+    
+    for line in text.split("\n"):
+        line = line.strip()
+        if line.startswith("Chapter"):  
+            current_chapter = line  
 
-        return article_chunks, chapter_chunks
-    except Exception as e:
-        print(f"Error processing PDF: {e}")
-        return [], []
+        if line.startswith("Article"):  
+            parts = line.split(" ", 2)
+            if len(parts) > 2:
+                article_number = parts[1]
+                article_text = parts[2]
+                articles.append({
+                    "article_number": article_number,
+                    "chapter_number": current_chapter,
+                    "text": article_text
+                })
 
-# Store embeddings in Pinecone
-def store_vectors(articles, chapters, pdf_name):
-    try:
-        vectors = []
-        for i, article in enumerate(articles):
-            vector = get_embedding(article)
-            doc_id = f"{pdf_name}-article-{i}"
-            metadata = {"pdf_name": pdf_name, "type": "article", "content": article}
-            vectors.append((doc_id, vector, metadata))
+    return articles
 
-        for i, chapter in enumerate(chapters):
-            vector = get_embedding(chapter)
-            doc_id = f"{pdf_name}-chapter-{i}"
-            metadata = {"pdf_name": pdf_name, "type": "chapter", "content": chapter}
-            vectors.append((doc_id, vector, metadata))
+def store_articles(articles, pdf_name):
+    """Store extracted articles in Pinecone."""
+    vectors = []
+    for i, article in enumerate(articles):
+        vector = get_embedding(article["text"])
+        metadata = {
+            "article_number": article["article_number"],
+            "chapter_number": article["chapter_number"],
+            "pdf_name": pdf_name,
+            "text": article["text"],
+            "type": "article"
+        }
+        vectors.append((f"{pdf_name}-article-{i}", vector, metadata))
+    
+    index.upsert(vectors)
 
-        print(f"✅ Storing {len(vectors)} vectors in Pinecone...")
-        index.upsert(vectors)
-    except Exception as e:
-        print(f"❌ Error storing vectors: {str(e)}")
-
-# Query Pinecone
-def query_vectors(query, query_type="article"):
-    vector = get_embedding(query)
-    results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"type": query_type})
+def query_pinecone(query):
+    """Retrieve top-matching articles from Pinecone."""
+    query_vector = get_embedding(query)
+    results = index.query(vector=query_vector, top_k=5, include_metadata=True)
 
     if results["matches"]:
-        return [match["metadata"]["content"] for match in results["matches"]]
-    else:
-        return ["No relevant information found."]
+        return results["matches"]
+    return []
 
 # Streamlit UI
 st.title("📜 AI-Powered Legal HelpDesk")
 
-pdf_source = st.radio("Select PDF Source", ["Upload PDF"])
+uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
 
-if pdf_source == "Upload PDF":
-    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
-    if uploaded_file:
-        pdf_name = uploaded_file.name
-        temp_pdf_path = f"temp_{pdf_name}"
+if uploaded_file:
+    pdf_name = uploaded_file.name
+    temp_pdf_path = f"temp_{pdf_name}"
+    
+    with open(temp_pdf_path, "wb") as f:
+        f.write(uploaded_file.read())
 
-        with open(temp_pdf_path, "wb") as f:
-            f.write(uploaded_file.read())
+    articles = process_pdf(temp_pdf_path)
+    store_articles(articles, pdf_name)
+    st.success("PDF processed and articles stored successfully!")
 
-        articles, chapters = process_pdf(temp_pdf_path)
-        store_vectors(articles, chapters, pdf_name)
-        st.success("PDF processed and stored in Pinecone!")
-
-query = st.text_input("Ask a question:")
-query_type = st.radio("Search in:", ["Article", "Chapter"], index=0).lower()
-
+query = st.text_input("Ask a legal question:")
 if st.button("Search"):
-    results = query_vectors(query, query_type)
-    for res in results:
-        st.write(f"🔹 {res}")
+    if query:
+        results = query_pinecone(query)
+        for i, match in enumerate(results):
+            st.write(f"### {i+1}. **Article {match['metadata']['article_number']}**")
+            st.write(f"📖 **Chapter:** {match['metadata']['chapter_number']}")
+            st.write(f"📄 **Text:** {match['metadata']['text']}")
+            st.write("---")
+    else:
+        st.warning("Please enter a query!")
