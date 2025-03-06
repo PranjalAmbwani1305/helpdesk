@@ -72,26 +72,40 @@ def store_vectors(chapters, articles, pdf_name):
         article_vector = model.encode(article['content']).tolist()
         index.upsert([(
             f"{pdf_name}-article-{i}", article_vector, 
-            {"pdf_name": pdf_name, "chapter": article['chapter'], "text": article['content'], "type": "article"}
+            {"pdf_name": pdf_name, "chapter": article['chapter'], "text": article['content'], "type": "article", "title": article['title']}
         )])
 
 def query_vectors(query, selected_pdf):
-    """Queries Pinecone for the most relevant result."""
+    """Queries Pinecone for the most relevant result, prioritizing article and chapter matches."""
     query_vector = model.encode(query).tolist()
     
-    # Query for a specific article if mentioned in the query
-    article_match = re.search(r'Article (\d+|[A-Za-z]+)', query)
+    # Look for article mentions in the query (e.g., "Article 1", "Article One", etc.)
+    article_match = re.search(r'Article (\d+|[A-Za-z]+)', query, re.IGNORECASE)
     if article_match:
         article_number = article_match.group(1)
-        results = index.query(vector=query_vector, top_k=1, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}, "type": {"$eq": "article"}, "title": {"$eq": f"Article {article_number}"}})
+        
+        # Query Pinecone for the specific article
+        results = index.query(
+            vector=query_vector,
+            top_k=1, 
+            include_metadata=True, 
+            filter={"pdf_name": {"$eq": selected_pdf}, "type": {"$eq": "article"}, "title": {"$eq": f"Article {article_number}"}}
+        )
+        
         if results and results["matches"]:
             return results["matches"][0]["metadata"]["text"]
     
-    # Generic query for other articles or chapters if no article is mentioned
-    results = index.query(vector=query_vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
+    # If no specific article is mentioned, query all chapters and articles
+    results = index.query(
+        vector=query_vector,
+        top_k=5, 
+        include_metadata=True, 
+        filter={"pdf_name": {"$eq": selected_pdf}}
+    )
     
     if results and results["matches"]:
         return "\n\n".join([match["metadata"]["text"] for match in results["matches"]])
+    
     return "No relevant answer found."
 
 def translate_text(text, target_lang):
