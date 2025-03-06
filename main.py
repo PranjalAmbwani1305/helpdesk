@@ -29,10 +29,17 @@ def process_pdf(pdf_path):
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
         text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
-    
-    chapters, articles = []
-    current_chapter, current_chapter_content = "Uncategorized", []
-    current_article, current_article_content = None, []
+
+    # Ensure extracted text is not empty
+    if not text.strip():
+        raise ValueError("The PDF does not contain extractable text.")
+
+    chapters = []
+    articles = []
+    current_chapter = "Uncategorized"
+    current_chapter_content = []
+    current_article = None
+    current_article_content = []
 
     paragraphs = text.split('\n')
 
@@ -41,7 +48,7 @@ def process_pdf(pdf_path):
 
         # Detect Chapters
         if re.match(chapter_pattern, para):
-            if current_chapter != "Uncategorized":
+            if current_chapter_content:
                 chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
             current_chapter = para
             current_chapter_content = []
@@ -49,7 +56,7 @@ def process_pdf(pdf_path):
         # Detect Articles
         article_match = re.match(article_pattern, para)
         if article_match:
-            if current_article:
+            if current_article_content:
                 articles.append({
                     'chapter': current_chapter, 
                     'title': current_article, 
@@ -67,9 +74,9 @@ def process_pdf(pdf_path):
                 current_chapter_content.append(para)
 
     # Append last detected sections
-    if current_article:
+    if current_article_content:
         articles.append({'chapter': current_chapter, 'title': current_article, 'content': ' '.join(current_article_content)})
-    if current_chapter and current_chapter != "Uncategorized":
+    if current_chapter_content:
         chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
 
     return chapters, articles
@@ -135,14 +142,19 @@ if pdf_source == "Upload from PC":
         with open(temp_pdf_path, "wb") as f:
             f.write(uploaded_file.read())
         
-        # Process PDF to extract chapters & articles
-        chapters, articles = process_pdf(temp_pdf_path)
+        try:
+            # Process PDF to extract chapters & articles
+            chapters, articles = process_pdf(temp_pdf_path)
 
-        # Store extracted sections in Pinecone
-        store_vectors(chapters, articles, uploaded_file.name)
+            # Store extracted sections in Pinecone
+            store_vectors(chapters, articles, uploaded_file.name)
 
-        st.success("PDF uploaded and processed successfully!")
-        selected_pdf = uploaded_file.name
+            st.success("PDF uploaded and processed successfully!")
+            selected_pdf = uploaded_file.name
+        except ValueError as ve:
+            st.error(f"Error: {ve}")
+        except Exception as e:
+            st.error(f"An unexpected error occurred: {e}")
 else:
     st.info("Document Storage feature is currently unavailable.")
 
@@ -155,17 +167,20 @@ query = st.text_input("Ask a legal question:")
 
 if st.button("Get Answer"):
     if selected_pdf and query:
-        # Detect language and translate query to English
-        detected_lang = GoogleTranslator(source="auto", target="en").translate(query)
-        
-        # Query Pinecone with the translated query
-        response = query_vectors(detected_lang, selected_pdf)
+        try:
+            # Detect language and translate query to English
+            detected_lang = GoogleTranslator(source="auto", target="en").translate(query)
+            
+            # Query Pinecone with the translated query
+            response = query_vectors(detected_lang, selected_pdf)
 
-        # Translate response if needed
-        if response_language == "Arabic":
-            response = GoogleTranslator(source="auto", target="ar").translate(response)
-            st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
-        else:
-            st.write(f"**Answer:** {response}")
+            # Translate response if needed
+            if response_language == "Arabic":
+                response = GoogleTranslator(source="auto", target="ar").translate(response)
+                st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
+            else:
+                st.write(f"**Answer:** {response}")
+        except Exception as e:
+            st.error(f"An error occurred while processing your query: {e}")
     else:
         st.warning("Please enter a query and select a PDF.")
