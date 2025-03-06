@@ -62,30 +62,32 @@ def store_vectors(chapters, articles, pdf_name):
     """Stores extracted chapters and articles in Pinecone."""
     for i, chapter in enumerate(chapters):
         chapter_vector = model.encode(chapter['content']).tolist()
-        index.upsert([  # Upsert for each chapter
-            (f"{pdf_name}-chapter-{i}", chapter_vector, {"pdf_name": pdf_name, "text": chapter['content'], "type": "chapter"})
-        ])
+        index.upsert([(
+            f"{pdf_name}-chapter-{i}", chapter_vector, 
+            {"pdf_name": pdf_name, "text": chapter['content'], "type": "chapter"}
+        )])
     
     for i, article in enumerate(articles):
+        # Debugging: Print extracted article content
+        st.write(f"Storing Article {article['title']}: {article['content'][:200]}...")  # Show first 200 characters for verification
+        
         article_vector = model.encode(article['content']).tolist()
-        index.upsert([  # Upsert for each article
-            (f"{pdf_name}-article-{i}", article_vector, {"pdf_name": pdf_name, "chapter": article['chapter'], "text": article['content'], "type": "article"})
-        ])
+        index.upsert([(
+            f"{pdf_name}-article-{i}", article_vector, 
+            {"pdf_name": pdf_name, "chapter": article['chapter'], "text": article['content'], "type": "article"}
+        )])
 
 def query_vectors(query, selected_pdf):
     """Queries Pinecone for the most relevant result, prioritizing exact article matches."""
-    query_vector = model.encode(query).tolist()
-    
-    # Try prioritizing specific articles, e.g., Article 1, Article 2, etc.
     if "article 1" in query.lower() or "article one" in query.lower():
-        results = index.query(vector=query_vector, top_k=1, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}, "type": {"$eq": "article"}, "title": {"$eq": "Article 1"}})
-        if results["matches"]:
+        results = index.query(vector=None, top_k=1, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}, "type": {"$eq": "article"}, "title": {"$eq": "Article 1"}})
+        if results and results["matches"]:
             return results["matches"][0]["metadata"]["text"]
-
-    # Fallback search for all articles and chapters
+    
+    query_vector = model.encode(query).tolist()
     results = index.query(vector=query_vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
     
-    if results["matches"]:
+    if results and results["matches"]:
         return "\n\n".join([match["metadata"]["text"] for match in results["matches"]])
     return "No relevant answer found."
 
