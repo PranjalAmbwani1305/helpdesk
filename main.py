@@ -12,7 +12,6 @@ PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 index_name = "helpdesk"
 
 # Initialize Pinecone
-from pinecone import Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
 index = pc.Index(index_name)
 
@@ -29,7 +28,7 @@ def process_pdf(pdf_path):
         reader = PyPDF2.PdfReader(file)
         text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
     
-    chapters, articles = [], []
+    chapters, articles = []
     current_chapter, current_chapter_content = "Uncategorized", []
     current_article, current_article_content = None, []
 
@@ -38,42 +37,38 @@ def process_pdf(pdf_path):
     for para in paragraphs:
         para = para.strip()
 
-        # Detect Chapters (e.g., "Chapter One: General Principles")
+        # Detect Chapters (e.g., "Chapter 3: Governance")
         chapter_match = re.match(chapter_pattern, para)
         if chapter_match:
             if current_chapter != "Uncategorized":
                 chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
             current_chapter = chapter_match.group(1)
             current_chapter_content = []
+            continue
         
-        # Detect Articles (e.g., "Article 1:")
+        # Detect Articles (e.g., "Article 5:")
         article_match = re.match(article_pattern, para)
         if article_match:
             if current_article:
                 articles.append({
-                    'chapter': current_chapter, 
-                    'title': current_article, 
-                    'article_number': article_match.group(2),  
+                    'chapter': current_chapter,
+                    'title': current_article,
+                    'article_number': article_match.group(2) if article_match else "Unknown",
                     'content': ' '.join(current_article_content)
                 })
             current_article = article_match.group(1)
             current_article_content = []
+            continue
         
-        # Add content to current section
+        # Add content to the respective section
+        if current_article:
+            current_article_content.append(para)
         else:
-            if current_article:
-                current_article_content.append(para)
-            else:
-                current_chapter_content.append(para)
+            current_chapter_content.append(para)
 
     # Append last detected sections
     if current_article:
-        articles.append({
-            'chapter': current_chapter, 
-            'title': current_article, 
-            'article_number': article_match.group(2),  
-            'content': ' '.join(current_article_content)
-        })
+        articles.append({'chapter': current_chapter, 'title': current_article, 'content': ' '.join(current_article_content)})
     if current_chapter and current_chapter != "Uncategorized":
         chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
 
@@ -84,22 +79,17 @@ def store_vectors(chapters, articles, pdf_name):
     for i, chapter in enumerate(chapters):
         chapter_vector = model.encode(chapter['content']).tolist()
         index.upsert([
-            (f"{pdf_name}-chapter-{i}", chapter_vector, {
-                "pdf_name": pdf_name, 
-                "text": chapter['content'], 
-                "type": "chapter",
-                "chapter_title": chapter['title']
-            })
+            (f"{pdf_name}-chapter-{i}", chapter_vector, {"pdf_name": pdf_name, "text": chapter['content'], "type": "chapter"})
         ])
 
     for i, article in enumerate(articles):
         article_vector = model.encode(article['content']).tolist()
         index.upsert([
             (f"{pdf_name}-article-{i}", article_vector, {
-                "pdf_name": pdf_name, 
-                "chapter": article['chapter'], 
-                "article_number": article['article_number'],  
-                "text": article['content'], 
+                "pdf_name": pdf_name,
+                "chapter": article['chapter'],
+                "article_number": article.get('article_number', "Unknown"),
+                "text": article['content'],
                 "type": "article"
             })
         ])
@@ -108,15 +98,7 @@ def store_vectors(chapters, articles, pdf_name):
 def query_vectors(query, selected_pdf):
     try:
         vector = model.encode(query).tolist()
-        
-        # If the user is searching for a specific chapter, filter by chapter
-        chapter_match = re.search(r'Chapter (\d+|[A-Za-z]+)', query, re.IGNORECASE)
-        filters = {"pdf_name": {"$eq": selected_pdf}}
-
-        if chapter_match:
-            filters["chapter_title"] = {"$eq": chapter_match.group(0)}
-
-        results = index.query(vector=vector, top_k=5, include_metadata=True, filter=filters)
+        results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
         
         if results["matches"]:
             matched_texts = []
@@ -126,11 +108,11 @@ def query_vectors(query, selected_pdf):
                 section_text = match["metadata"]["text"]
                 
                 if section_type == "chapter":
-                    matched_texts.append(f"**Chapter:** {match['metadata']['chapter_title']}\n\n{section_text}")
+                    matched_texts.append(f"**Chapter:** {section_text}")
                 elif section_type == "article":
                     chapter_name = match["metadata"].get("chapter", "Uncategorized")
-                    article_number = match["metadata"].get("article_number", "N/A")
-                    matched_texts.append(f"**{chapter_name} - Article {article_number}:**\n{section_text}")
+                    article_number = match["metadata"].get("article_number", "Unknown")
+                    matched_texts.append(f"**{chapter_name} - Article {article_number}**\n{section_text}")
             
             return "\n\n".join(matched_texts)
         else:
@@ -158,13 +140,12 @@ if pdf_source == "Upload from PC":
         store_vectors(chapters, articles, uploaded_file.name)
 
         st.success("PDF uploaded and processed successfully!")
-
-        selected_pdf = uploaded_file.name  # Store uploaded file name for querying
+        selected_pdf = uploaded_file.name  # Set the selected PDF after upload
     else:
         selected_pdf = None
 else:
     st.info("Document Storage feature is currently unavailable.")
-    selected_pdf = None  # Placeholder for future storage integration
+    selected_pdf = None  # Reset selected file if storage is unavailable
 
 # Language Selection
 input_language = st.selectbox("Choose Input Language", ("English", "Arabic"))
