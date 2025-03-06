@@ -39,16 +39,18 @@ def process_pdf(pdf_path):
         para = para.strip()
 
         # Detect Chapters (e.g., "Chapter One: General Principles")
-        if re.match(chapter_pattern, para):
+        chapter_match = re.match(chapter_pattern, para)
+        if chapter_match:
             if current_chapter != "Uncategorized":
                 chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
             current_chapter = para
             current_chapter_content = []
         
         # Detect Articles (e.g., "Article 1:")
-        elif re.match(article_pattern, para):
+        article_match = re.match(article_pattern, para)
+        if article_match:
             if current_article:
-                articles.append({'chapter': current_chapter, 'title': current_article, 'content': ' '.join(current_article_content)})
+                articles.append({'chapter': current_chapter, 'title': current_article, 'article_number': article_match.group(2), 'content': ' '.join(current_article_content)})
             current_article = para
             current_article_content = []
         
@@ -61,7 +63,7 @@ def process_pdf(pdf_path):
 
     # Append last detected sections
     if current_article:
-        articles.append({'chapter': current_chapter, 'title': current_article, 'content': ' '.join(current_article_content)})
+        articles.append({'chapter': current_chapter, 'title': current_article, 'article_number': article_match.group(2), 'content': ' '.join(current_article_content)})
     if current_chapter and current_chapter != "Uncategorized":
         chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
 
@@ -72,20 +74,23 @@ def store_vectors(chapters, articles, pdf_name):
     for i, chapter in enumerate(chapters):
         chapter_vector = model.encode(chapter['content']).tolist()
         index.upsert([
-            (f"{pdf_name}-chapter-{i}", chapter_vector, {"pdf_name": pdf_name, "text": chapter['content'], "type": "chapter"})
+            (f"{pdf_name}-chapter-{i}", chapter_vector, {"pdf_name": pdf_name, "text": chapter['content'], "type": "chapter", "chapter_number": re.findall(r'\d+', chapter['title'])})
         ])
 
     for i, article in enumerate(articles):
         article_vector = model.encode(article['content']).tolist()
         index.upsert([
-            (f"{pdf_name}-article-{i}", article_vector, {"pdf_name": pdf_name, "chapter": article['chapter'], "text": article['content'], "type": "article"})
+            (f"{pdf_name}-article-{i}", article_vector, {"pdf_name": pdf_name, "chapter": article['chapter'], "text": article['content'], "type": "article", "article_number": article['article_number']})
         ])
 
 # Function to query vectors from Pinecone
 def query_vectors(query, selected_pdf):
     try:
         vector = model.encode(query).tolist()
-        results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
+        chapter_match = re.search(r'Chapter (\d+)', query, re.IGNORECASE)
+        chapter_number_filter = {"chapter_number": {"$eq": chapter_match.group(1)}} if chapter_match else {}
+
+        results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}, **chapter_number_filter})
         
         if results["matches"]:
             matched_texts = []
@@ -98,7 +103,8 @@ def query_vectors(query, selected_pdf):
                     matched_texts.append(f"**Chapter:** {section_text}")
                 elif section_type == "article":
                     chapter_name = match["metadata"].get("chapter", "Uncategorized")
-                    matched_texts.append(f"**{chapter_name}**\n{section_text}")
+                    article_number = match["metadata"].get("article_number", "Unknown")
+                    matched_texts.append(f"**{chapter_name} - Article {article_number}**\n{section_text}")
             
             return "\n\n".join(matched_texts)
         else:
