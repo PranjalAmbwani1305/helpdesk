@@ -29,17 +29,10 @@ def process_pdf(pdf_path):
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
         text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
-
-    # Ensure extracted text is not empty
-    if not text.strip():
-        raise ValueError("The PDF does not contain extractable text.")
-
-    chapters = []
-    articles = []
-    current_chapter = "Uncategorized"
-    current_chapter_content = []
-    current_article = None
-    current_article_content = []
+    
+    chapters, articles = [], []
+    current_chapter, current_chapter_content = "Uncategorized", []
+    current_article, current_article_content = None, []
 
     paragraphs = text.split('\n')
 
@@ -48,7 +41,7 @@ def process_pdf(pdf_path):
 
         # Detect Chapters
         if re.match(chapter_pattern, para):
-            if current_chapter_content:
+            if current_chapter != "Uncategorized":
                 chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
             current_chapter = para
             current_chapter_content = []
@@ -56,7 +49,7 @@ def process_pdf(pdf_path):
         # Detect Articles
         article_match = re.match(article_pattern, para)
         if article_match:
-            if current_article_content:
+            if current_article:
                 articles.append({
                     'chapter': current_chapter, 
                     'title': current_article, 
@@ -74,9 +67,9 @@ def process_pdf(pdf_path):
                 current_chapter_content.append(para)
 
     # Append last detected sections
-    if current_article_content:
+    if current_article:
         articles.append({'chapter': current_chapter, 'title': current_article, 'content': ' '.join(current_article_content)})
-    if current_chapter_content:
+    if current_chapter and current_chapter != "Uncategorized":
         chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
 
     return chapters, articles
@@ -84,19 +77,29 @@ def process_pdf(pdf_path):
 # Function to store Chapters & Articles as vectors in Pinecone
 def store_vectors(chapters, articles, pdf_name):
     for i, chapter in enumerate(chapters):
-        chapter_vector = model.encode(chapter['content']).tolist()
+        chapter_content = chapter.get("content", "").strip()
+        if not chapter_content:
+            print(f"⚠️ Skipping empty chapter: {chapter}")
+            continue
+
+        chapter_vector = model.encode(chapter_content).tolist()
         index.upsert([
-            (f"{pdf_name}-chapter-{i}", chapter_vector, {"pdf_name": pdf_name, "text": chapter['content'], "type": "chapter"})
+            (f"{pdf_name}-chapter-{i}", chapter_vector, {"pdf_name": pdf_name, "text": chapter_content, "type": "chapter"})
         ])
 
     for i, article in enumerate(articles):
-        article_vector = model.encode(article['content']).tolist()
+        article_content = article.get("content", "").strip()
+        if not article_content:
+            print(f"⚠️ Skipping empty article: {article}")
+            continue
+
+        article_vector = model.encode(article_content).tolist()
         index.upsert([
             (f"{pdf_name}-article-{i}", article_vector, {
                 "pdf_name": pdf_name,
-                "chapter": article['chapter'],
-                "article_number": article.get('article_number', "Unknown"),
-                "text": article['content'], 
+                "chapter": article.get("chapter", "Unknown"),
+                "article_number": article.get("article_number", "Unknown"),
+                "text": article_content,
                 "type": "article"
             })
         ])
@@ -111,16 +114,17 @@ def query_vectors(query, selected_pdf):
             matched_texts = []
             
             for match in results["matches"]:
-                section_type = match["metadata"]["type"]
-                section_text = match["metadata"]["text"]
-                
+                metadata = match.get("metadata", {})
+                section_type = metadata.get("type", "Unknown")
+                section_text = metadata.get("text", "No text found")
+
                 if section_type == "chapter":
                     matched_texts.append(f"**Chapter:** {section_text}")
                 elif section_type == "article":
-                    chapter_name = match["metadata"].get("chapter", "Uncategorized")
-                    article_number = match["metadata"].get("article_number", "Unknown")
+                    chapter_name = metadata.get("chapter", "Uncategorized")
+                    article_number = metadata.get("article_number", "Unknown")
                     matched_texts.append(f"**{chapter_name} - Article {article_number}**\n{section_text}")
-            
+
             return "\n\n".join(matched_texts)
         else:
             return "No relevant information found in the selected document."
@@ -142,19 +146,15 @@ if pdf_source == "Upload from PC":
         with open(temp_pdf_path, "wb") as f:
             f.write(uploaded_file.read())
         
-        try:
-            # Process PDF to extract chapters & articles
-            chapters, articles = process_pdf(temp_pdf_path)
+        # Process PDF to extract chapters & articles
+        chapters, articles = process_pdf(temp_pdf_path)
 
-            # Store extracted sections in Pinecone
-            store_vectors(chapters, articles, uploaded_file.name)
+        # Store extracted sections in Pinecone
+        store_vectors(chapters, articles, uploaded_file.name)
 
-            st.success("PDF uploaded and processed successfully!")
-            selected_pdf = uploaded_file.name
-        except ValueError as ve:
-            st.error(f"Error: {ve}")
-        except Exception as e:
-            st.error(f"An unexpected error occurred: {e}")
+        selected_pdf = uploaded_file.name
+        st.success("PDF uploaded and processed successfully!")
+
 else:
     st.info("Document Storage feature is currently unavailable.")
 
@@ -167,20 +167,14 @@ query = st.text_input("Ask a legal question:")
 
 if st.button("Get Answer"):
     if selected_pdf and query:
-        try:
-            # Detect language and translate query to English
-            detected_lang = GoogleTranslator(source="auto", target="en").translate(query)
-            
-            # Query Pinecone with the translated query
-            response = query_vectors(detected_lang, selected_pdf)
+        detected_lang = GoogleTranslator(source="auto", target="en").translate(query)
+        
+        response = query_vectors(detected_lang, selected_pdf)
 
-            # Translate response if needed
-            if response_language == "Arabic":
-                response = GoogleTranslator(source="auto", target="ar").translate(response)
-                st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
-            else:
-                st.write(f"**Answer:** {response}")
-        except Exception as e:
-            st.error(f"An error occurred while processing your query: {e}")
+        if response_language == "Arabic":
+            response = GoogleTranslator(source="auto", target="ar").translate(response)
+            st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
+        else:
+            st.write(f"**Answer:** {response}")
     else:
         st.warning("Please enter a query and select a PDF.")
