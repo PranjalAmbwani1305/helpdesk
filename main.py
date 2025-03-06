@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
 from deep_translator import GoogleTranslator
 
-# Load environment variables for Pinecone API key
+# Load environment variables
 load_dotenv()
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 index_name = "helpdesk"
@@ -17,8 +17,8 @@ from pinecone import Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
 index = pc.Index(index_name)
 
-# Initialize sentence transformer model
-model = SentenceTransformer("all-MiniLM-L6-v2")
+# Initialize Sentence Transformer model with 384-dimension embeddings
+model = SentenceTransformer("sentence-transformers/all-MiniLM-L12-v2")
 
 # Regex patterns for Chapters & Articles
 chapter_pattern = r'^(Chapter (\d+|[A-Za-z]+)):.*$'
@@ -77,29 +77,19 @@ def process_pdf(pdf_path):
 # Function to store Chapters & Articles as vectors in Pinecone
 def store_vectors(chapters, articles, pdf_name):
     for i, chapter in enumerate(chapters):
-        chapter_content = chapter.get("content", "").strip()
-        if not chapter_content:
-            print(f"⚠️ Skipping empty chapter: {chapter}")
-            continue
-
-        chapter_vector = model.encode(chapter_content).tolist()
+        chapter_vector = model.encode(chapter['content']).tolist()
         index.upsert([
-            (f"{pdf_name}-chapter-{i}", chapter_vector, {"pdf_name": pdf_name, "text": chapter_content, "type": "chapter"})
+            (f"{pdf_name}-chapter-{i}", chapter_vector, {"pdf_name": pdf_name, "text": chapter['content'], "type": "chapter"})
         ])
 
     for i, article in enumerate(articles):
-        article_content = article.get("content", "").strip()
-        if not article_content:
-            print(f"⚠️ Skipping empty article: {article}")
-            continue
-
-        article_vector = model.encode(article_content).tolist()
+        article_vector = model.encode(article['content']).tolist()
         index.upsert([
             (f"{pdf_name}-article-{i}", article_vector, {
                 "pdf_name": pdf_name,
-                "chapter": article.get("chapter", "Unknown"),
-                "article_number": article.get("article_number", "Unknown"),
-                "text": article_content,
+                "chapter": article['chapter'],
+                "article_number": article.get('article_number', "Unknown"),
+                "text": article['content'], 
                 "type": "article"
             })
         ])
@@ -114,22 +104,25 @@ def query_vectors(query, selected_pdf):
             matched_texts = []
             
             for match in results["matches"]:
-                metadata = match.get("metadata", {})
-                section_type = metadata.get("type", "Unknown")
-                section_text = metadata.get("text", "No text found")
-
+                section_type = match["metadata"]["type"]
+                section_text = match["metadata"]["text"]
+                
                 if section_type == "chapter":
                     matched_texts.append(f"**Chapter:** {section_text}")
                 elif section_type == "article":
-                    chapter_name = metadata.get("chapter", "Uncategorized")
-                    article_number = metadata.get("article_number", "Unknown")
+                    chapter_name = match["metadata"].get("chapter", "Uncategorized")
+                    article_number = match["metadata"].get("article_number", "Unknown")
                     matched_texts.append(f"**{chapter_name} - Article {article_number}**\n{section_text}")
-
+            
             return "\n\n".join(matched_texts)
         else:
             return "No relevant information found in the selected document."
     except Exception as e:
         return f"Error during query: {e}"
+
+# Translation Function
+def translate_text(text, target_lang):
+    return GoogleTranslator(source="auto", target=target_lang).translate(text)
 
 # Streamlit UI
 st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk</h1>", unsafe_allow_html=True)
@@ -137,6 +130,8 @@ st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk</h1>", un
 # PDF Source Selection
 pdf_source = st.radio("Select PDF Source", ("Upload from PC", "Choose from Document Storage"))
 
+# PDF File Handling
+pdf_files = ["Basic Law Governance.pdf"]  # Example stored files
 selected_pdf = None
 
 if pdf_source == "Upload from PC":
@@ -152,11 +147,10 @@ if pdf_source == "Upload from PC":
         # Store extracted sections in Pinecone
         store_vectors(chapters, articles, uploaded_file.name)
 
-        selected_pdf = uploaded_file.name
         st.success("PDF uploaded and processed successfully!")
-
+        selected_pdf = uploaded_file.name
 else:
-    st.info("Document Storage feature is currently unavailable.")
+    selected_pdf = st.selectbox("Select a PDF", pdf_files)
 
 # Language Selection
 input_language = st.selectbox("Choose Input Language", ("English", "Arabic"))
@@ -172,7 +166,7 @@ if st.button("Get Answer"):
         response = query_vectors(detected_lang, selected_pdf)
 
         if response_language == "Arabic":
-            response = GoogleTranslator(source="auto", target="ar").translate(response)
+            response = translate_text(response, "ar")
             st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
         else:
             st.write(f"**Answer:** {response}")
