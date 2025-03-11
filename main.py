@@ -13,32 +13,28 @@ pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 index = pc.Index(index_name)
 
-# Load Hugging Face Model (Sentence Transformer)
+# Load Hugging Face Model
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Regex patterns for Chapters & Articles
+# Regex patterns
 chapter_pattern = r'^(Chapter (\d+|[A-Za-z]+)):.*$'
 article_pattern = r'^(Article (\d+|[A-Za-z]+)):.*$'
 
 def extract_text_from_pdf(pdf_path):
-    """Extracts and structures text from the PDF."""
+    """Extracts structured text from the PDF."""
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
         text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
     
     chapters, articles = [], []
-    current_chapter, current_chapter_content = "Uncategorized", []
+    current_chapter = "Uncategorized"
     current_article, current_article_content = None, []
-    paragraphs = text.split('\n')
     
-    for para in paragraphs:
+    for para in text.split('\n'):
         para = para.strip()
         
         if re.match(chapter_pattern, para):
-            if current_chapter != "Uncategorized":
-                chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
             current_chapter = para
-            current_chapter_content = []
         
         article_match = re.match(article_pattern, para)
         if article_match:
@@ -49,91 +45,64 @@ def extract_text_from_pdf(pdf_path):
         else:
             if current_article:
                 current_article_content.append(para)
-            else:
-                current_chapter_content.append(para)
-
+    
     if current_article:
         articles.append({'chapter': current_chapter, 'title': current_article, 'content': ' '.join(current_article_content)})
-    if current_chapter and current_chapter != "Uncategorized":
-        chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
-    
-    return chapters, articles
+    return articles
 
-def store_vectors(chapters, articles, pdf_name):
-    """Stores extracted chapters and articles in Pinecone with correct numbering."""
-    for i, chapter in enumerate(chapters):
-        chapter_vector = model.encode(chapter['content']).tolist()
-        index.upsert([(
-            f"{pdf_name}-chapter-{i}", chapter_vector, 
-            {"pdf_name": pdf_name, "text": chapter['content'], "type": "chapter"}
-        )])
-    
+
+def store_vectors(articles, pdf_name):
+    """Stores extracted articles in Pinecone."""
     for i, article in enumerate(articles):
-        # Extract article number correctly
-        article_number_match = re.search(r'Article (\d+|[A-Za-z]+)', article['title'], re.IGNORECASE)
-        if article_number_match:
-            article_number = article_number_match.group(1)
-        else:
-            article_number = str(i)  # Fallback to index if no article number is found
-        
         article_vector = model.encode(article['content']).tolist()
-        index.upsert([(
-            f"{pdf_name}-article-{article_number}", article_vector, 
-            {"pdf_name": pdf_name, "chapter": article['chapter'], "text": article['content'], "type": "article", "title": article['title']}
-        )])
+        index.upsert([
+            (f"{pdf_name}-article-{i}", article_vector, {
+                "pdf_name": pdf_name, "chapter": article['chapter'],
+                "text": article['content'], "type": "article", "title": article['title']
+            })
+        ])
+
 
 def query_vectors(query, selected_pdf):
-    """Queries Pinecone for the most relevant result, prioritizing article and chapter matches."""
+    """Queries Pinecone for the most relevant result."""
     query_vector = model.encode(query).tolist()
     
-    # Look for article mentions in the query (e.g., "Article 1", "Article One", etc.)
+    # Handling Chapter Queries
+    chapter_match = re.search(r'Chapter (\d+|[A-Za-z]+)', query, re.IGNORECASE)
+    if chapter_match:
+        chapter_number = chapter_match.group(1)
+        results = index.query(
+            vector=query_vector,
+            top_k=5,
+            include_metadata=True,
+            filter={"pdf_name": {"$eq": selected_pdf}, "chapter": {"$regex": f"Chapter {chapter_number}.*"}}
+        )
+        if results and results["matches"]:
+            return "\n\n".join([match["metadata"]["text"] for match in results["matches"]])
+    
+    # Handling Article Queries
     article_match = re.search(r'Article (\d+|[A-Za-z]+)', query, re.IGNORECASE)
     if article_match:
         article_number = article_match.group(1)
-        
-        # Query Pinecone for the specific article
         results = index.query(
             vector=query_vector,
-            top_k=1, 
-            include_metadata=True, 
+            top_k=1,
+            include_metadata=True,
             filter={"pdf_name": {"$eq": selected_pdf}, "type": {"$eq": "article"}, "title": {"$eq": f"Article {article_number}"}}
         )
-        
         if results and results["matches"]:
             return results["matches"][0]["metadata"]["text"]
-    
-    # If no specific article is mentioned, query all chapters and articles
-    results = index.query(
-        vector=query_vector,
-        top_k=5, 
-        include_metadata=True, 
-        filter={"pdf_name": {"$eq": selected_pdf}}
-    )
-    
-    if results and results["matches"]:
-        return "\n\n".join([match["metadata"]["text"] for match in results["matches"]])
     
     return "No relevant answer found."
 
 def translate_text(text, target_lang):
-    """Translates text using GoogleTranslator."""
+    """Translates text."""
     return GoogleTranslator(source="auto", target=target_lang).translate(text)
 
 # Streamlit UI
-st.set_page_config(page_title="Legal HelpDesk", page_icon="⚖️", layout="centered")
-
-# Custom Styling
-st.markdown("""
-    <style>
-        .title { font-size: 30px; font-weight: bold; color: #4A90E2; text-align: center; }
-        .subtitle { font-size: 18px; color: #555; text-align: center; margin-bottom: 20px; }
-        .stButton>button { background-color: #4A90E2; color: white; font-size: 16px; border-radius: 10px; padding: 10px; }
-        .stTextInput>div>div>input { font-size: 16px; padding: 10px; }
-    </style>
-""", unsafe_allow_html=True)
-
-st.markdown("<div class='title'>AI-Powered Legal HelpDesk ⚖️</div>", unsafe_allow_html=True)
-st.markdown("<div class='subtitle'>Upload or Select a Legal Document and Ask a Question</div>", unsafe_allow_html=True)
+st.set_page_config(page_title="Legal HelpDesk", layout="wide")
+st.title("📜 AI-Powered Legal HelpDesk")
+st.write("Ask legal questions and retrieve specific articles & chapters instantly.")
 
 # PDF Source Selection
 pdf_source = st.radio("Select PDF Source", ["Upload from PC", "Choose from Document Storage"], index=1)
@@ -146,24 +115,20 @@ if pdf_source == "Upload from PC":
         with open(temp_pdf_path, "wb") as f:
             f.write(uploaded_file.read())
         
-        chapters, articles = extract_text_from_pdf(temp_pdf_path)
-        store_vectors(chapters, articles, uploaded_file.name)
+        articles = extract_text_from_pdf(temp_pdf_path)
+        store_vectors(articles, uploaded_file.name)
         selected_pdf = uploaded_file.name
-        st.success("✅ PDF uploaded and processed successfully!")
+        st.success("PDF uploaded and processed successfully!")
 else:
     stored_pdfs = ["Basic Law Governance.pdf", "Law of the Consultative Council.pdf", "Law of the Council of Ministers.pdf"]
-    selected_pdf = st.selectbox("📜 Select a Legal Document", stored_pdfs)
+    selected_pdf = st.selectbox("Select a PDF", stored_pdfs)
 
 # Language Selection
-col1, col2 = st.columns(2)
-with col1:
-    input_lang = st.radio("Choose Input Language", ["English", "Arabic"], index=0)
-with col2:
-    response_lang = st.radio("Choose Response Language", ["English", "Arabic"], index=0)
+input_lang = st.radio("Choose Input Language", ["English", "Arabic"], index=0)
+response_lang = st.radio("Choose Response Language", ["English", "Arabic"], index=0)
 
 # Query Input
-query = st.text_input("💬 Ask a legal question:")
-
+query = st.text_input("Ask a legal question:")
 if st.button("🔍 Get Answer"):
     if selected_pdf and query:
         response = query_vectors(query, selected_pdf)
@@ -171,6 +136,6 @@ if st.button("🔍 Get Answer"):
             response = translate_text(response, "ar")
             st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
         else:
-            st.write(f"**📌 Answer:** {response}")
+            st.write(f"**Answer:** {response}")
     else:
-        st.warning("⚠️ Please upload a PDF and enter a query.")
+        st.warning("Please upload a PDF and enter a query.")
