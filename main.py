@@ -120,7 +120,20 @@ def translate_text(text, target_lang):
     return GoogleTranslator(source="auto", target=target_lang).translate(text)
 
 # Streamlit UI
-st.title("AI-Powered Legal HelpDesk")
+st.set_page_config(page_title="Legal HelpDesk", page_icon="⚖️", layout="centered")
+
+# Custom Styling
+st.markdown("""
+    <style>
+        .title { font-size: 30px; font-weight: bold; color: #4A90E2; text-align: center; }
+        .subtitle { font-size: 18px; color: #555; text-align: center; margin-bottom: 20px; }
+        .stButton>button { background-color: #4A90E2; color: white; font-size: 16px; border-radius: 10px; padding: 10px; }
+        .stTextInput>div>div>input { font-size: 16px; padding: 10px; }
+    </style>
+""", unsafe_allow_html=True)
+
+st.markdown("<div class='title'>AI-Powered Legal HelpDesk ⚖️</div>", unsafe_allow_html=True)
+st.markdown("<div class='subtitle'>Upload or Select a Legal Document and Ask a Question</div>", unsafe_allow_html=True)
 
 # PDF Source Selection
 pdf_source = st.radio("Select PDF Source", ["Upload from PC", "Choose from Document Storage"], index=1)
@@ -136,25 +149,28 @@ if pdf_source == "Upload from PC":
         chapters, articles = extract_text_from_pdf(temp_pdf_path)
         store_vectors(chapters, articles, uploaded_file.name)
         selected_pdf = uploaded_file.name
-        st.success("PDF uploaded and processed successfully!")
+        st.success("✅ PDF uploaded and processed successfully!")
 else:
     stored_pdfs = ["Basic Law Governance.pdf", "Law of the Consultative Council.pdf", "Law of the Council of Ministers.pdf"]
-    selected_pdf = st.selectbox("Select a PDF", stored_pdfs)
+    selected_pdf = st.selectbox("📜 Select a Legal Document", stored_pdfs)
 
 # Language Selection
-input_lang = st.radio("Choose Input Language", ["English", "Arabic"], index=0)
-response_lang = st.radio("Choose Response Language", ["English", "Arabic"], index=0)
+col1, col2 = st.columns(2)
+with col1:
+    input_lang = st.radio("Choose Input Language", ["English", "Arabic"], index=0)
+with col2:
+    response_lang = st.radio("Choose Response Language", ["English", "Arabic"], index=0)
 
 # Query Input
-query = st.text_input("Ask a legal question:")
+query = st.text_input("💬 Ask a legal question:")
 
-if st.button("Get Answer"):
+if st.button("🔍 Get Answer"):
     if selected_pdf and query:
         response = query_vectors(query, selected_pdf)
         if response_lang == "Arabic":
             response = translate_text(response, "ar")
             st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
         else:
-            st.write(f"**Answer:** {response}")
+            st.write(f"**📌 Answer:** {response}")
     else:
-        st.warning("Please upload a PDF and enter a query.")
+        st.warning("⚠️ Please upload a PDF and enter a query.")
