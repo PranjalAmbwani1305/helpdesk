@@ -1,154 +1,53 @@
 import streamlit as st
-import pinecone
-import PyPDF2
-import os
-import re
-from deep_translator import GoogleTranslator
+from pinecone import Pinecone
 from sentence_transformers import SentenceTransformer
+import os
 
 # Initialize Pinecone
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-from pinecone import Pinecone
+PINECONE_API_KEY = "your-api-key"  # Replace with actual API key
+INDEX_NAME = "helpdesk"
 pc = Pinecone(api_key=PINECONE_API_KEY)
-index_name = "helpdesk"
-index = pc.Index(index_name)
+index = pc.Index(INDEX_NAME)
 
-# Load Hugging Face Model (Sentence Transformer)
+# Load embedding model
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Sidebar - List stored PDFs
-st.sidebar.title("Stored PDFs")
-stored_pdfs = ["Basic Law Governance.pdf", "Law of the Consultative Council.pdf", "Law of the Council of Ministers.pdf"]
+# Sidebar - List stored PDFs in Pinecone
+def get_stored_pdfs():
+    try:
+        query_results = index.query(
+            vector=[0] * 384,  # Dummy vector, use appropriate dimension
+            top_k=100,
+            include_metadata=True
+        )
+        return list(set(match["metadata"].get("pdf_name", "Unknown") for match in query_results["matches"]))
+    except Exception as e:
+        return ["Error fetching PDFs"]
+
+st.sidebar.header("📂 Stored PDFs in Pinecone")
+stored_pdfs = get_stored_pdfs()
 st.sidebar.write("\n".join(stored_pdfs))
 
-# Regex patterns for Chapters & Articles
-chapter_pattern = r'^(Chapter (\d+|[A-Za-z]+)):.*$'
-article_pattern = r'^(Article (\d+|[A-Za-z]+)):.*$'
+# File uploader
+st.header("📜 AI-Powered Legal HelpDesk")
+uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
 
-def extract_text_from_pdf(pdf_path):
-    """Extracts and structures text from the PDF."""
-    with open(pdf_path, "rb") as file:
-        reader = PyPDF2.PdfReader(file)
-        text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
-    
-    chapters, articles = [], []
-    current_chapter, current_chapter_content = "Uncategorized", []
-    current_article, current_article_content = None, []
-    paragraphs = text.split('\n')
-    
-    for para in paragraphs:
-        para = para.strip()
-        
-        if re.match(chapter_pattern, para):
-            if current_chapter != "Uncategorized":
-                chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
-            current_chapter = para
-            current_chapter_content = []
-        
-        article_match = re.match(article_pattern, para)
-        if article_match:
-            if current_article:
-                articles.append({'chapter': current_chapter, 'title': current_article, 'content': ' '.join(current_article_content)})
-            current_article = article_match.group(1)
-            current_article_content = []
-        else:
-            if current_article:
-                current_article_content.append(para)
-            else:
-                current_chapter_content.append(para)
+if uploaded_file:
+    with open(os.path.join("./", uploaded_file.name), "wb") as f:
+        f.write(uploaded_file.getbuffer())
+    st.success(f"Uploaded: {uploaded_file.name}")
 
-    if current_article:
-        articles.append({'chapter': current_chapter, 'title': current_article, 'content': ' '.join(current_article_content)})
-    if current_chapter and current_chapter != "Uncategorized":
-        chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
-    
-    return chapters, articles
+# Query system
+st.subheader("Ask a legal question:")
+query = st.text_input("Enter your question")
 
-def store_vectors(chapters, articles, pdf_name):
-    """Stores extracted chapters and articles in Pinecone with correct numbering."""
-    for i, chapter in enumerate(chapters):
-        chapter_vector = model.encode(chapter['content']).tolist()
-        index.upsert([(
-            f"{pdf_name}-chapter-{i}", chapter_vector, 
-            {"pdf_name": pdf_name, "text": chapter['content'], "type": "chapter"}
-        )])
-    
-    for i, article in enumerate(articles):
-        article_number_match = re.search(r'Article (\d+|[A-Za-z]+)', article['title'], re.IGNORECASE)
-        article_number = article_number_match.group(1) if article_number_match else str(i)
-        article_vector = model.encode(article['content']).tolist()
-        index.upsert([(
-            f"{pdf_name}-article-{article_number}", article_vector, 
-            {"pdf_name": pdf_name, "chapter": article['chapter'], "text": article['content'], "type": "article", "title": article['title']}
-        )])
-
-def query_vectors(query, selected_pdf):
-    """Queries Pinecone for relevant results, prioritizing articles and chapters."""
+if st.button("Search") and query:
     query_vector = model.encode(query).tolist()
-    article_match = re.search(r'Article (\d+|[A-Za-z]+)', query, re.IGNORECASE)
+    results = index.query(vector=query_vector, top_k=5, include_metadata=True)
     
-    if article_match:
-        article_number = article_match.group(1)
-        results = index.query(
-            vector=query_vector,
-            top_k=1, 
-            include_metadata=True, 
-            filter={"pdf_name": {"$eq": selected_pdf}, "type": {"$eq": "article"}, "title": {"$eq": f"Article {article_number}"}}
-        )
-        if results and results["matches"]:
-            return results["matches"][0]["metadata"]["text"]
-    
-    results = index.query(
-        vector=query_vector,
-        top_k=5, 
-        include_metadata=True, 
-        filter={"pdf_name": {"$eq": selected_pdf}}
-    )
-    
-    if results and results["matches"]:
-        return "\n\n".join([match["metadata"]["text"] for match in results["matches"]])
-    
-    return "No relevant answer found."
-
-def translate_text(text, target_lang):
-    """Translates text using GoogleTranslator."""
-    return GoogleTranslator(source="auto", target=target_lang).translate(text)
-
-# Streamlit UI
-st.title("AI-Powered Legal HelpDesk")
-
-# PDF Source Selection
-pdf_source = st.radio("Select PDF Source", ["Upload from PC", "Choose from Document Storage"], index=1)
-selected_pdf = None
-
-if pdf_source == "Upload from PC":
-    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
-    if uploaded_file is not None:
-        temp_pdf_path = os.path.join("/tmp", uploaded_file.name)
-        with open(temp_pdf_path, "wb") as f:
-            f.write(uploaded_file.read())
-        
-        chapters, articles = extract_text_from_pdf(temp_pdf_path)
-        store_vectors(chapters, articles, uploaded_file.name)
-        selected_pdf = uploaded_file.name
-        st.success("PDF uploaded and processed successfully!")
-else:
-    selected_pdf = st.selectbox("Select a PDF", stored_pdfs)
-
-# Language Selection
-input_lang = st.radio("Choose Input Language", ["English", "Arabic"], index=0)
-response_lang = st.radio("Choose Response Language", ["English", "Arabic"], index=0)
-
-# Query Input
-query = st.text_input("Ask a legal question:")
-
-if st.button("Get Answer"):
-    if selected_pdf and query:
-        response = query_vectors(query, selected_pdf)
-        if response_lang == "Arabic":
-            response = translate_text(response, "ar")
-            st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
-        else:
-            st.write(f"**Answer:** {response}")
+    if results["matches"]:
+        for match in results["matches"]:
+            st.write(f"### {match['metadata']['title']}")
+            st.write(f"📖 {match['metadata']['text']}")
     else:
-        st.warning("Please upload a PDF and enter a query.")
+        st.error("No relevant answer found.")
