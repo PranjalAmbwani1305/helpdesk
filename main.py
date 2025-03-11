@@ -124,7 +124,7 @@ if pdf_source == "Upload from PC":
     uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
     if uploaded_file is not None:
         # Store with a unique filename to avoid overwriting
-        temp_pdf_path = os.path.join("/tmp", f"{uploaded_file.name}_{str(hash(uploaded_file))}.pdf")
+        temp_pdf_path = os.path.join("/tmp", f"{uploaded_file.name}_{hash(uploaded_file.name + str(uploaded_file.size))}.pdf")
         with open(temp_pdf_path, "wb") as f:
             f.write(uploaded_file.read())
         
