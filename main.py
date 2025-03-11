@@ -3,7 +3,6 @@ import pinecone
 import PyPDF2
 import os
 import re
-import tempfile
 from deep_translator import GoogleTranslator
 from sentence_transformers import SentenceTransformer
 
@@ -14,7 +13,7 @@ pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 index = pc.Index(index_name)
 
-# Load Sentence Transformer Model
+# Load Hugging Face Model (Sentence Transformer)
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
 # Regex patterns for Chapters & Articles
@@ -61,7 +60,7 @@ def extract_text_from_pdf(pdf_path):
     return chapters, articles
 
 def store_vectors(chapters, articles, pdf_name):
-    """Stores extracted chapters and articles in Pinecone."""
+    """Stores extracted chapters and articles in Pinecone with correct numbering."""
     for i, chapter in enumerate(chapters):
         chapter_vector = model.encode(chapter['content']).tolist()
         index.upsert([(
@@ -70,9 +69,16 @@ def store_vectors(chapters, articles, pdf_name):
         )])
     
     for i, article in enumerate(articles):
+        # Extract article number correctly
+        article_number_match = re.search(r'Article (\d+|[A-Za-z]+)', article['title'], re.IGNORECASE)
+        if article_number_match:
+            article_number = article_number_match.group(1)
+        else:
+            article_number = str(i)  # Fallback to index if no article number is found
+        
         article_vector = model.encode(article['content']).tolist()
         index.upsert([(
-            f"{pdf_name}-article-{i}", article_vector, 
+            f"{pdf_name}-article-{article_number}", article_vector, 
             {"pdf_name": pdf_name, "chapter": article['chapter'], "text": article['content'], "type": "article", "title": article['title']}
         )])
 
@@ -111,10 +117,7 @@ def query_vectors(query, selected_pdf):
 
 def translate_text(text, target_lang):
     """Translates text using GoogleTranslator."""
-    try:
-        return GoogleTranslator(source="auto", target=target_lang).translate(text)
-    except Exception:
-        return "Translation failed."
+    return GoogleTranslator(source="auto", target=target_lang).translate(text)
 
 # Streamlit UI
 st.title("AI-Powered Legal HelpDesk")
@@ -126,9 +129,9 @@ selected_pdf = None
 if pdf_source == "Upload from PC":
     uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
     if uploaded_file is not None:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_pdf:
-            temp_pdf.write(uploaded_file.read())
-            temp_pdf_path = temp_pdf.name
+        temp_pdf_path = os.path.join("/tmp", uploaded_file.name)
+        with open(temp_pdf_path, "wb") as f:
+            f.write(uploaded_file.read())
         
         chapters, articles = extract_text_from_pdf(temp_pdf_path)
         store_vectors(chapters, articles, uploaded_file.name)
