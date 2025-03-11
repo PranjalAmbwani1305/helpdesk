@@ -1,3 +1,4 @@
+pinecone
 torch
 transformers
 sentence-transformers
