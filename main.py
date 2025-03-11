@@ -16,6 +16,11 @@ index = pc.Index(index_name)
 # Load Hugging Face Model (Sentence Transformer)
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
+# Sidebar - List stored PDFs
+st.sidebar.title("Stored PDFs")
+stored_pdfs = ["Basic Law Governance.pdf", "Law of the Consultative Council.pdf", "Law of the Council of Ministers.pdf"]
+st.sidebar.write("\n".join(stored_pdfs))
+
 # Regex patterns for Chapters & Articles
 chapter_pattern = r'^(Chapter (\d+|[A-Za-z]+)):.*$'
 article_pattern = r'^(Article (\d+|[A-Za-z]+)):.*$'
@@ -78,11 +83,10 @@ def store_vectors(chapters, articles, pdf_name):
         )])
 
 def query_vectors(query, selected_pdf):
-    """Queries Pinecone for relevant articles or chapters."""
+    """Queries Pinecone for relevant results, prioritizing articles and chapters."""
     query_vector = model.encode(query).tolist()
     article_match = re.search(r'Article (\d+|[A-Za-z]+)', query, re.IGNORECASE)
-    chapter_match = re.search(r'Chapter (\d+|[A-Za-z]+)', query, re.IGNORECASE)
-
+    
     if article_match:
         article_number = article_match.group(1)
         results = index.query(
@@ -94,17 +98,15 @@ def query_vectors(query, selected_pdf):
         if results and results["matches"]:
             return results["matches"][0]["metadata"]["text"]
     
-    if chapter_match:
-        chapter_number = chapter_match.group(1)
-        results = index.query(
-            vector=query_vector,
-            top_k=5, 
-            include_metadata=True, 
-            filter={"pdf_name": {"$eq": selected_pdf}, "type": {"$eq": "article"}}
-        )
-        articles_in_chapter = [match["metadata"]["text"] for match in results["matches"] if match["metadata"].get("chapter") == f"Chapter {chapter_number}"]
-        if articles_in_chapter:
-            return "\n\n".join(articles_in_chapter)
+    results = index.query(
+        vector=query_vector,
+        top_k=5, 
+        include_metadata=True, 
+        filter={"pdf_name": {"$eq": selected_pdf}}
+    )
+    
+    if results and results["matches"]:
+        return "\n\n".join([match["metadata"]["text"] for match in results["matches"]])
     
     return "No relevant answer found."
 
@@ -113,24 +115,21 @@ def translate_text(text, target_lang):
     return GoogleTranslator(source="auto", target=target_lang).translate(text)
 
 # Streamlit UI
-st.title("📜 AI-Powered Legal HelpDesk")
+st.title("AI-Powered Legal HelpDesk")
 
-# Fetch dynamically stored PDFs
-stored_pdfs = list(index.describe_index_stats()["namespaces"].keys())
-
-# PDF Selection
+# PDF Source Selection
 pdf_source = st.radio("Select PDF Source", ["Upload from PC", "Choose from Document Storage"], index=1)
 selected_pdf = None
 
 if pdf_source == "Upload from PC":
     uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
-    if uploaded_file:
+    if uploaded_file is not None:
         temp_pdf_path = os.path.join("/tmp", uploaded_file.name)
         with open(temp_pdf_path, "wb") as f:
             f.write(uploaded_file.read())
+        
         chapters, articles = extract_text_from_pdf(temp_pdf_path)
         store_vectors(chapters, articles, uploaded_file.name)
-        stored_pdfs.append(uploaded_file.name)
         selected_pdf = uploaded_file.name
         st.success("PDF uploaded and processed successfully!")
 else:
@@ -142,6 +141,7 @@ response_lang = st.radio("Choose Response Language", ["English", "Arabic"], inde
 
 # Query Input
 query = st.text_input("Ask a legal question:")
+
 if st.button("Get Answer"):
     if selected_pdf and query:
         response = query_vectors(query, selected_pdf)
