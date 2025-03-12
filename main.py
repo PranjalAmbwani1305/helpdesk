@@ -41,12 +41,15 @@ def store_vectors(embeddings, text_chunks, pdf_name):
         upsert_data.append((vector_id, embedding, metadata))
 
     if upsert_data:
-        # 🔹 Store vectors in Pinecone
-        index.upsert(vectors=upsert_data)
+        try:
+            # 🔹 Store vectors in Pinecone
+            index.upsert(vectors=upsert_data)
 
-        # 🔹 Debug: Fetch back stored data to verify
-        stored_data = index.query(vector=upsert_data[0][1], top_k=1, include_metadata=True)
-        print("🔍 Sample stored metadata:", stored_data["matches"][0]["metadata"])
+            # 🔹 Debug: Fetch back stored data to verify
+            stored_data = index.query(vector=upsert_data[0][1], top_k=1, include_metadata=True)
+            print("🔍 Sample stored metadata:", stored_data["matches"][0]["metadata"])
+        except Exception as e:
+            print(f"❌ Error storing vectors: {e}")
 
 # 🔹 Streamlit UI
 st.set_page_config(page_title="AI-Powered Legal HelpDesk", layout="wide")
@@ -75,7 +78,7 @@ def get_stored_pdfs():
             return pdf_names
         return []
     except Exception as e:
-        print(f"Error fetching PDFs: {e}")
+        print(f"❌ Error fetching PDFs: {e}")
         return []
 
 # Upload & Process Multiple PDFs
@@ -86,12 +89,24 @@ if uploaded_files:
         pdf_name = uploaded_file.name
         pdf_text = extract_text_from_pdf(uploaded_file)
 
+        if not pdf_text.strip():
+            st.error(f"❌ Could not extract text from {pdf_name}. It may be a scanned document.")
+            continue
+
         # Split text into chunks
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
         text_chunks = text_splitter.split_text(pdf_text)
 
+        if not text_chunks:
+            st.error(f"❌ No valid text chunks extracted from {pdf_name}.")
+            continue
+
         # Generate embeddings
         embeddings = embed_model.embed_documents(text_chunks)
+
+        if not embeddings:
+            st.error(f"❌ Embeddings could not be generated for {pdf_name}.")
+            continue
 
         # Store in Pinecone
         store_vectors(embeddings, text_chunks, pdf_name)
@@ -113,7 +128,9 @@ if query and selected_pdf != "No PDFs Found":
 
     st.subheader("📖 Relevant Legal Sections:")
     for match in search_results["matches"]:
-        st.write(f"🔹 **From PDF:** {match['metadata']['pdf_name']}")
-        st.write(f"📜 **Article ID:** {match['metadata']['article_id']}")
-        st.write(match["metadata"].get("text", "No text available"))
+        metadata = match.get("metadata", {})
+
+        st.write(f"🔹 **From PDF:** {metadata.get('pdf_name', 'Unknown PDF')}")
+        st.write(f"📜 **Article ID:** {metadata.get('article_id', 'Unknown')}")
+        st.write(metadata.get("text", "No text available"))
         st.write("---")
