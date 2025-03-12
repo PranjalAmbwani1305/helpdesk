@@ -5,6 +5,7 @@ import os
 import re
 from deep_translator import GoogleTranslator
 from sentence_transformers import SentenceTransformer
+import tempfile
 
 # Initialize Pinecone
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
@@ -142,10 +143,12 @@ selected_pdf = None
 if pdf_source == "Upload from PC":
     uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
     if uploaded_file is not None:
-        temp_pdf_path = os.path.join("/tmp", uploaded_file.name)
+        # Handle temporary file creation
+        temp_pdf_path = os.path.join(tempfile.gettempdir(), uploaded_file.name)
         with open(temp_pdf_path, "wb") as f:
             f.write(uploaded_file.read())
         
+        # Extract and store vectors
         chapters, articles = extract_text_from_pdf(temp_pdf_path)
         store_vectors(chapters, articles, uploaded_file.name)
         selected_pdf = uploaded_file.name
