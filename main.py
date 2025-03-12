@@ -1,7 +1,7 @@
 import os
 import re
 import streamlit as st
-import fitz  # PyMuPDF
+import fitz  # PyMuPDF for PDF processing
 import pinecone
 import hashlib
 import asyncio
@@ -9,14 +9,10 @@ import torch
 from transformers import AutoTokenizer, AutoModel
 from deep_translator import GoogleTranslator  # Translation Support
 
-# ✅ Set up Pinecone API
+# 🔹 Set up Pinecone API
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 index_name = "helpdesk"
 
-if not PINECONE_API_KEY:
-    st.error("⚠️ Pinecone API Key is missing! Set it in environment variables.")
-
-# 🔹 Initialize Pinecone
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index = pc.Index(index_name)
 
@@ -34,29 +30,38 @@ model = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
 def translate_text(text, target_lang):
     return GoogleTranslator(source="auto", target=target_lang).translate(text)
 
-# 🎯 Generate text embeddings
+# 🎯 Function to generate text embeddings
 def get_embedding(text):
     inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
     with torch.no_grad():
         outputs = model(**inputs)
     return outputs.last_hidden_state[:, 0, :].squeeze().numpy().tolist()  # Convert to list
 
-# 📜 Extract text from PDF and split into articles
+# 📜 Function to extract articles from PDF
 def extract_articles_from_pdf(pdf_path):
     doc = fitz.open(pdf_path)
     full_text = ""
-    
+
     for page in doc:
         full_text += page.get_text("text") + "\n"
 
-    # 📝 Split text into articles based on "Article", "Section", or numbering like 1., 2., etc.
-    article_pattern = re.compile(r'(Article\s\d+|Section\s\d+|\n\d+\.)', re.IGNORECASE)
+    if not full_text.strip():
+        return None  # If no text is extracted, return None
+
+    # 🔹 Article Detection (Supports "Article X", "Section X", "Chapter X", or "1. Title")
+    article_pattern = re.compile(
+        r'(?i)\b(Article\s\d+|Section\s\d+|Chapter\s\d+|\n\d+\.\s[A-Za-z])', re.IGNORECASE
+    )
+
+    # 🔹 Splitting based on detected pattern
     articles = re.split(article_pattern, full_text)
 
-    # Filter out empty articles
+    if len(articles) < 2:  # If no valid split occurs, return full text as one article
+        return [full_text.strip()]
+
     return [article.strip() for article in articles if article.strip()]
 
-# 📂 Upload and store PDFs in Pinecone (Article-wise)
+# 📂 Function to upload and store PDFs in Pinecone (article-wise)
 def process_and_store_pdf(uploaded_file):
     if uploaded_file is not None:
         pdf_name = uploaded_file.name.replace(" ", "_").lower()
@@ -71,32 +76,40 @@ def process_and_store_pdf(uploaded_file):
             st.error("⚠️ No articles detected in the PDF.")
             return
 
-        # 🔹 Store each article separately
-        vectors = []
+        pdf_id = hashlib.md5(pdf_name.encode()).hexdigest()
+
         for idx, article in enumerate(articles):
-            article_id = hashlib.md5((pdf_name + str(idx)).encode()).hexdigest()
+            article_id = f"{pdf_id}_article_{idx}"
             vector = get_embedding(article)
 
-            vectors.append((article_id, vector, {"pdf_name": pdf_name, "article": article}))
+            index.upsert(vectors=[(article_id, vector, {"pdf_name": pdf_name, "content": article})], namespace=pdf_name)
 
-        index.upsert(vectors=vectors, namespace=pdf_name)
-        st.success(f"✅ PDF '{pdf_name}' uploaded with {len(articles)} articles stored!")
+        st.success(f"✅ PDF '{pdf_name}' processed successfully with {len(articles)} articles!")
 
-# 📑 Get available PDFs
-def get_stored_pdfs():
+# 🔹 Query Function
+def query_pinecone(query_text, selected_pdf):
+    query_vector = get_embedding(query_text)
+
     try:
-        index_stats = index.describe_index_stats()
-        
-        if "namespaces" in index_stats:
-            return list(index_stats["namespaces"].keys())
-    except Exception as e:
-        st.error(f"⚠️ Pinecone error: {str(e)}")
-    return []
+        results = index.query(
+            namespace=selected_pdf,
+            queries=[query_vector],  # Ensure it's a list
+            top_k=5,
+            include_metadata=True
+        )
 
-# 🎨 UI: Sidebar for Available PDFs
-st.sidebar.title("📂 Available PDFs")
-stored_pdfs = get_stored_pdfs()
-selected_pdf = st.sidebar.selectbox("📜 Select a PDF", stored_pdfs if stored_pdfs else ["No PDFs Found"])
+        return results["matches"] if results["matches"] else []
+    
+    except Exception as e:
+        st.error(f"⚠️ Pinecone query failed: {str(e)}")
+        return []
+
+# 🎨 UI: Sidebar for PDF Upload & Language Selection
+st.sidebar.title("📂 Upload Legal Document")
+uploaded_file = st.sidebar.file_uploader("📂 Upload PDF (Limit 200MB)", type=["pdf"])
+
+if uploaded_file:
+    process_and_store_pdf(uploaded_file)
 
 # 🌍 Language Selection
 language = st.sidebar.radio("🌍 Select Language", ["English", "Arabic"])
@@ -104,42 +117,26 @@ language = st.sidebar.radio("🌍 Select Language", ["English", "Arabic"])
 # 🎨 UI: Main Page
 st.markdown(f"<h1 style='text-align: center;'>📜 AI-Powered Legal HelpDesk ({'English' if language == 'English' else 'عربي'})</h1>", unsafe_allow_html=True)
 
-# 🔹 PDF Upload Section
-st.subheader("📑 Select PDF Source" if language == "English" else "📑 اختر مصدر ملف PDF")
-uploaded_file = st.file_uploader("📂 Upload a PDF" if language == "English" else "📂 تحميل ملف PDF", type=["pdf"])
-if uploaded_file:
-    process_and_store_pdf(uploaded_file)
-
 # 🔍 Query Section
 st.subheader("🤖 Ask a Legal Question" if language == "English" else "🤖 اسأل سؤال قانوني")
 query = st.text_area("✍️ Type your question here:" if language == "English" else "✍️ اكتب سؤالك هنا:")
 
 if st.button("🔎 Get Answer" if language == "English" else "🔎 احصل على الإجابة"):
-    if selected_pdf and selected_pdf != "No PDFs Found":
+    stored_namespaces = index.describe_index_stats().get("namespaces", {}).keys()
+    if not stored_namespaces:
+        st.error("⚠️ No PDFs available. Upload a document first.")
+    else:
         translated_query = translate_text(query, "en") if language == "Arabic" else query
-        query_vector = get_embedding(translated_query)
+        all_results = []
 
-        try:
-            # Query Pinecone with selected PDF
-            results = index.query(
-                namespace=selected_pdf,
-                queries=[query_vector],  # Ensure it's a list
-                top_k=3,
-                include_metadata=True
-            )
+        for pdf_namespace in stored_namespaces:
+            all_results.extend(query_pinecone(translated_query, pdf_namespace))
 
-            if results["matches"]:
-                answer = results["matches"][0]["metadata"]["article"]
-            else:
-                answer = "⚠️ No relevant information found." if language == "English" else "⚠️ لم يتم العثور على معلومات ذات صلة."
-
-            translated_answer = translate_text(answer, "ar") if language == "Arabic" else answer
+        if not all_results:
+            st.error("⚠️ No relevant articles found.")
+        else:
+            best_match = all_results[0]["metadata"]["content"]
+            translated_answer = translate_text(best_match, "ar") if language == "Arabic" else best_match
 
             st.markdown("### ✅ AI Answer:" if language == "English" else "### ✅ إجابة الذكاء الاصطناعي:")
             st.info(translated_answer)
-        
-        except Exception as e:
-            st.error(f"⚠️ Pinecone query failed: {str(e)}")
-
-    else:
-        st.error("⚠️ Please select a PDF before asking a question." if language == "English" else "⚠️ يرجى تحديد ملف PDF قبل طرح سؤال.")     
