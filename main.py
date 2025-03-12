@@ -50,7 +50,7 @@ stored_pdfs = get_stored_pdfs()
 if stored_pdfs:
     for pdf in stored_pdfs:
         st.sidebar.write(f"📄 {pdf}")
- else:
+else:
      st.sidebar.write("No PDFs stored yet.")
 
 # PDF Upload Section
