@@ -1,108 +1,168 @@
-import os
-import uuid
 import streamlit as st
 import pinecone
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.text_splitter import CharacterTextSplitter
-from PyPDF2 import PdfReader
-
-# Load API keys securely from environment variables
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-INDEX_NAME = "helpdesk"
+import PyPDF2
+import os
+import re
+from deep_translator import GoogleTranslator
+from sentence_transformers import SentenceTransformer
 
 # Initialize Pinecone
-pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
-index = pc.Index(INDEX_NAME)
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+from pinecone import Pinecone
+pc = Pinecone(api_key=PINECONE_API_KEY)
+index_name = "helpdesk"
+index = pc.Index(index_name)
 
-# Load Hugging Face model for embeddings
-embed_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+# Load Hugging Face Model (Sentence Transformer)
+model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Streamlit Page Configuration
-st.set_page_config(page_title="AI-Powered Legal HelpDesk", layout="wide")
+# Regex patterns for Chapters & Articles
+chapter_pattern = r'^(Chapter (\d+|[A-Za-z]+)):.*$'
+article_pattern = r'^(Article (\d+|[A-Za-z]+)):.*$'
 
-# Sidebar UI for PDF Selection
-st.sidebar.header("📂 Stored PDFs")
-
-# Function to fetch stored PDFs from Pinecone
-def get_stored_pdfs():
-    """Fetch unique PDF names stored in Pinecone."""
-    try:
-        stats = index.describe_index_stats()
-        if stats.get("total_vector_count", 0) == 0:
-            return []
-
-        # Query Pinecone to get stored PDFs
-        results = index.query(vector=[0] * 384, top_k=1000, include_metadata=True)
+def extract_text_from_pdf(pdf_path):
+    """Extracts and structures text from the PDF."""
+    with open(pdf_path, "rb") as file:
+        reader = PyPDF2.PdfReader(file)
+        text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+    
+    chapters, articles = [], []
+    current_chapter, current_chapter_content = "Uncategorized", []
+    current_article, current_article_content = None, []
+    paragraphs = text.split('\n')
+    
+    for para in paragraphs:
+        para = para.strip()
         
-        # Extract unique PDF names
-        pdf_names = list(set(
-            match["metadata"]["pdf_name"] for match in results["matches"] if "pdf_name" in match["metadata"]
-        ))
+        if re.match(chapter_pattern, para):
+            if current_chapter != "Uncategorized":
+                chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
+            current_chapter = para
+            current_chapter_content = []
+        
+        article_match = re.match(article_pattern, para)
+        if article_match:
+            if current_article:
+                articles.append({'chapter': current_chapter, 'title': current_article, 'content': ' '.join(current_article_content)})
+            current_article = article_match.group(1)
+            current_article_content = []
+        else:
+            if current_article:
+                current_article_content.append(para)
+            else:
+                current_chapter_content.append(para)
 
-        return pdf_names
-    except Exception as e:
-        st.error(f"Error fetching PDFs: {e}")
-        return []
+    if current_article:
+        articles.append({'chapter': current_chapter, 'title': current_article, 'content': ' '.join(current_article_content)})
+    if current_chapter and current_chapter != "Uncategorized":
+        chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
+    
+    return chapters, articles
 
-# Load existing PDFs into sidebar dropdown
+def store_vectors(chapters, articles, pdf_name):
+    """Stores extracted chapters and articles in Pinecone."""
+    namespace = pdf_name.replace(" ", "_").lower()  # Unique namespace for each PDF
+
+    for i, chapter in enumerate(chapters):
+        chapter_vector = model.encode(chapter['content']).tolist()
+        index.upsert([(
+            f"{pdf_name}-chapter-{i}", chapter_vector, 
+            {"pdf_name": pdf_name, "text": chapter['content'], "type": "chapter"}
+        )], namespace=namespace)
+    
+    for i, article in enumerate(articles):
+        article_number_match = re.search(r'Article (\d+|[A-Za-z]+)', article['title'], re.IGNORECASE)
+        article_number = article_number_match.group(1) if article_number_match else str(i)
+        article_vector = model.encode(article['content']).tolist()
+        index.upsert([(
+            f"{pdf_name}-article-{article_number}", article_vector, 
+            {"pdf_name": pdf_name, "chapter": article['chapter'], "text": article['content'], "type": "article", "title": article['title']}
+        )], namespace=namespace)
+
+def get_stored_pdfs():
+    """Retrieves a list of stored PDFs from Pinecone."""
+    index_stats = index.describe_index_stats()
+    namespaces = index_stats.get("namespaces", {})
+    stored_pdfs = list(namespaces.keys())
+    return stored_pdfs
+
+def query_vectors(query, selected_pdf):
+    """Queries Pinecone for the most relevant result."""
+    query_vector = model.encode(query).tolist()
+    namespace = selected_pdf.replace(" ", "_").lower()
+
+    article_match = re.search(r'Article (\d+|[A-Za-z]+)', query, re.IGNORECASE)
+    if article_match:
+        article_number = article_match.group(1)
+        results = index.query(
+            vector=query_vector,
+            top_k=1, 
+            include_metadata=True, 
+            filter={"pdf_name": {"$eq": selected_pdf}, "type": {"$eq": "article"}, "title": {"$eq": f"Article {article_number}"}},
+            namespace=namespace
+        )
+        if results and results["matches"]:
+            return results["matches"][0]["metadata"]["text"]
+    
+    results = index.query(
+        vector=query_vector,
+        top_k=5, 
+        include_metadata=True, 
+        filter={"pdf_name": {"$eq": selected_pdf}},
+        namespace=namespace
+    )
+    
+    if results and results["matches"]:
+        return "\n\n".join([match["metadata"]["text"] for match in results["matches"]])
+    
+    return "No relevant answer found."
+
+def translate_text(text, target_lang):
+    """Translates text using GoogleTranslator."""
+    return GoogleTranslator(source="auto", target=target_lang).translate(text)
+
+# Streamlit UI
+st.title("📜 AI-Powered Legal HelpDesk")
+
+# Sidebar: List stored PDFs
+st.sidebar.header("📂 Stored PDFs")
 stored_pdfs = get_stored_pdfs()
-selected_pdf = st.sidebar.selectbox("Select a PDF", options=stored_pdfs if stored_pdfs else ["No PDFs Found"])
+selected_pdf = None
 
-# Function to extract text from PDF
-def extract_text_from_pdf(pdf_file):
-    """Extracts text from an uploaded PDF file."""
-    reader = PdfReader(pdf_file)
-    text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
-    return text
+# PDF Source Selection
+pdf_source = st.radio("Select PDF Source", ["Upload from PC", "Choose from Document Storage"], index=1)
 
-# Function to store vectors in Pinecone
-def store_vectors(embeddings, pdf_name, chunks):
-    """Store embeddings in Pinecone with unique keys."""
-    to_upsert = []
-    for idx, (embedding, text_chunk) in enumerate(zip(embeddings, chunks)):
-        unique_id = f"{pdf_name}_{idx}_{uuid.uuid4().hex[:8]}"  # Unique ID for each vector
-        to_upsert.append((unique_id, embedding, {"pdf_name": pdf_name, "text": text_chunk}))
+if pdf_source == "Upload from PC":
+    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
+    if uploaded_file is not None:
+        temp_pdf_path = os.path.join("/tmp", uploaded_file.name)
+        with open(temp_pdf_path, "wb") as f:
+            f.write(uploaded_file.read())
+        
+        chapters, articles = extract_text_from_pdf(temp_pdf_path)
+        store_vectors(chapters, articles, uploaded_file.name)
+        selected_pdf = uploaded_file.name
+        st.success(f"PDF '{uploaded_file.name}' uploaded and processed successfully!")
+else:
+    if stored_pdfs:
+        selected_pdf = st.sidebar.radio("Select a PDF", stored_pdfs)
+    else:
+        st.sidebar.warning("No PDFs found in storage.")
 
-    index.upsert(vectors=to_upsert)
+# Language Selection
+input_lang = st.radio("Choose Input Language", ["English", "Arabic"], index=0)
+response_lang = st.radio("Choose Response Language", ["English", "Arabic"], index=0)
 
-# Upload and Process PDF
-st.header("📜 AI-Powered Legal HelpDesk")
-st.subheader("Upload a Legal Document")
+# Query Input
+query = st.text_input("Ask a legal question:")
 
-uploaded_file = st.file_uploader("Upload a PDF", type="pdf")
-
-if uploaded_file is not None:
-    pdf_name = uploaded_file.name
-    pdf_text = extract_text_from_pdf(uploaded_file)
-
-    if pdf_text.strip():
-        # Split text into chunks
-        text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-        chunks = text_splitter.split_text(pdf_text)
-
-        # Generate embeddings
-        embeddings = embed_model.embed_documents(chunks)
-
-        # Store vectors in Pinecone
-        store_vectors(embeddings, pdf_name, chunks)
-
-        st.success(f"✅ PDF '{pdf_name}' uploaded and processed successfully!")
-
-        # Refresh the dropdown with new PDFs
-        stored_pdfs = get_stored_pdfs()
-        selected_pdf = st.sidebar.selectbox("Select a PDF", options=stored_pdfs)
-
-# Question Input
-st.subheader("Ask a legal question:")
-query = st.text_input("Type your question here...")
-
-if query and selected_pdf != "No PDFs Found":
-    # Search in Pinecone
-    query_embedding = embed_model.embed_query(query)
-    search_results = index.query(vector=query_embedding, top_k=5, include_metadata=True)
-
-    st.subheader("📖 Relevant Legal Sections:")
-    for match in search_results["matches"]:
-        st.write(f"🔹 **From PDF:** {match['metadata']['pdf_name']}")
-        st.write(match["metadata"].get("text", "No text available"))
-        st.write("---")
+if st.button("Get Answer"):
+    if selected_pdf and query:
+        response = query_vectors(query, selected_pdf)
+        if response_lang == "Arabic":
+            response = translate_text(response, "ar")
+            st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
+        else:
+            st.write(f"**Answer:** {response}")
+    else:
+        st.warning("Please select a stored PDF and enter a query.")
