@@ -46,13 +46,12 @@ st.title("🛡️ AI-Powered Legal HelpDesk for Saudi Arabia")
 
 # Sidebar - Stored PDFs
 st.sidebar.title("📂 Stored PDFs")
-if check_index():
-    stored_pdfs = get_stored_pdfs()
-    if stored_pdfs:
-        for pdf in stored_pdfs:
-            st.sidebar.write(f"📄 {pdf}")
-    else:
-        st.sidebar.write("No PDFs stored yet.")
+stored_pdfs = get_stored_pdfs()
+if stored_pdfs:
+    for pdf in stored_pdfs:
+        st.sidebar.write(f"📄 {pdf}")
+ else:
+     st.sidebar.write("No PDFs stored yet.")
 
 # PDF Upload Section
 st.subheader("📄 Upload or Select a PDF")
