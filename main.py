@@ -32,9 +32,9 @@ def get_stored_pdfs():
         if stats.get("total_vector_count", 0) == 0:
             return []
 
-        # Query Pinecone to get stored PDFs
+        # Query Pinecone to get all stored PDFs
         results = index.query(vector=[0] * 384, top_k=1000, include_metadata=True)
-        
+
         # Extract unique PDF names
         pdf_names = list(set(
             match["metadata"]["pdf_name"] for match in results["matches"] if "pdf_name" in match["metadata"]
@@ -56,15 +56,17 @@ def extract_text_from_pdf(pdf_file):
     text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
     return text
 
-# Function to store vectors in Pinecone
-def store_vectors(embeddings, pdf_name, chunks):
-    """Store embeddings in Pinecone with unique keys."""
+# Function to store chunks as articles in Pinecone
+def store_articles(embeddings, pdf_name, chunks):
+    """Store document chunks as articles in Pinecone with unique keys."""
     to_upsert = []
+    article_id = uuid.uuid4().hex[:8]  # Unique ID for the entire PDF document
     for idx, (embedding, text_chunk) in enumerate(zip(embeddings, chunks)):
-        unique_id = f"{pdf_name}_{idx}_{uuid.uuid4().hex[:8]}"  # Unique ID for each vector
-        to_upsert.append((unique_id, embedding, {"pdf_name": pdf_name, "text": text_chunk}))
+        unique_id = f"{pdf_name}_{idx}_{uuid.uuid4().hex[:8]}"  # Unique ID per chunk
+        to_upsert.append((unique_id, embedding, {"pdf_name": pdf_name, "article_id": article_id, "text": text_chunk}))
 
-    index.upsert(vectors=to_upsert)
+    if to_upsert:
+        index.upsert(vectors=to_upsert)
 
 # Upload and Process PDF
 st.header("📜 AI-Powered Legal HelpDesk")
@@ -84,8 +86,8 @@ if uploaded_file is not None:
         # Generate embeddings
         embeddings = embed_model.embed_documents(chunks)
 
-        # Store vectors in Pinecone
-        store_vectors(embeddings, pdf_name, chunks)
+        # Store as articles
+        store_articles(embeddings, pdf_name, chunks)
 
         st.success(f"✅ PDF '{pdf_name}' uploaded and processed successfully!")
 
@@ -103,7 +105,20 @@ if query and selected_pdf != "No PDFs Found":
     search_results = index.query(vector=query_embedding, top_k=5, include_metadata=True)
 
     st.subheader("📖 Relevant Legal Sections:")
+    article_results = {}  # To group chunks by article ID
+
     for match in search_results["matches"]:
-        st.write(f"🔹 **From PDF:** {match['metadata']['pdf_name']}")
-        st.write(match["metadata"].get("text", "No text available"))
+        pdf_name = match["metadata"]["pdf_name"]
+        article_id = match["metadata"]["article_id"]
+        text = match["metadata"].get("text", "No text available")
+
+        if article_id not in article_results:
+            article_results[article_id] = {"pdf_name": pdf_name, "text": []}
+        
+        article_results[article_id]["text"].append(text)
+
+    # Display results grouped by article
+    for article_id, data in article_results.items():
+        st.write(f"🔹 **From PDF:** {data['pdf_name']}")
+        st.write("\n".join(data["text"]))
         st.write("---")
