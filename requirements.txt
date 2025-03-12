@@ -13,3 +13,6 @@ tqdm
 pymupdf
 PyPDF2
 deep-translator
+pytesseract
+pdf2image
+pillow
