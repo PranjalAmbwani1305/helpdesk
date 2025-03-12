@@ -64,6 +64,7 @@ def store_vectors(chapters, articles, pdf_name):
     """Stores extracted chapters and articles in Pinecone with correct numbering."""
     for i, chapter in enumerate(chapters):
         chapter_vector = model.encode(chapter['content']).tolist()
+        print(f"Chapter {i} vector: {chapter_vector[:5]}...")  # Print part of the vector for debugging
         index.upsert([(
             f"{pdf_name}-chapter-{i}", chapter_vector, 
             {"pdf_name": pdf_name, "text": chapter['content'], "type": "chapter"}
@@ -78,6 +79,7 @@ def store_vectors(chapters, articles, pdf_name):
             article_number = str(i)  # Fallback to index if no article number is found
         
         article_vector = model.encode(article['content']).tolist()
+        print(f"Article {article_number} vector: {article_vector[:5]}...")  # Print part of the vector for debugging
         index.upsert([(
             f"{pdf_name}-article-{article_number}", article_vector, 
             {"pdf_name": pdf_name, "chapter": article['chapter'], "text": article['content'], "type": "article", "title": article['title']}
@@ -147,9 +149,13 @@ if pdf_source == "Upload from PC":
         temp_pdf_path = os.path.join(tempfile.gettempdir(), uploaded_file.name)
         with open(temp_pdf_path, "wb") as f:
             f.write(uploaded_file.read())
-        
+        st.write(f"Temporary PDF path: {temp_pdf_path}")
+
         # Extract and store vectors
         chapters, articles = extract_text_from_pdf(temp_pdf_path)
+        st.write(f"Chapters extracted: {len(chapters)}")
+        st.write(f"Articles extracted: {len(articles)}")
+
         store_vectors(chapters, articles, uploaded_file.name)
         selected_pdf = uploaded_file.name
         st.success("✅ PDF uploaded and processed successfully!")
