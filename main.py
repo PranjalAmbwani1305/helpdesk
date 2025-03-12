@@ -12,17 +12,6 @@ INDEX_NAME = "helpdesk"
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index = pc.Index(INDEX_NAME)
 
-# Ensure index exists
-def check_index():
-    try:
-        if INDEX_NAME not in pc.list_indexes():
-            st.error("⚠️ Pinecone index not found. Please check your configuration.")
-            return False
-        return True
-    except Exception as e:
-        st.error(f"🔴 Error connecting to Pinecone: {str(e)}")
-        return False
-
 # Extract text from PDF
 def extract_text_from_pdf(pdf_path):
     text = ""
