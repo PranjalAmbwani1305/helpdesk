@@ -9,4 +9,3 @@ tqdm
 pymupdf
 PyPDF2
 deep-translator
-
