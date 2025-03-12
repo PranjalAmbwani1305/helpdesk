@@ -1,90 +1,90 @@
+import os
+import uuid
 import streamlit as st
 import pinecone
-import os
-import tempfile
-import fitz  # PyMuPDF for extracting text from PDFs
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.text_splitter import CharacterTextSplitter
+from PyPDF2 import PdfReader
 
-from pinecone import Pinecone
 # Initialize Pinecone
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY") 
 INDEX_NAME = "helpdesk"
 
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index = pc.Index(INDEX_NAME)
 
-# Extract text from PDF
-def extract_text_from_pdf(pdf_path):
-    text = ""
-    try:
-        doc = fitz.open(pdf_path)
-        for page in doc:
-            text += page.get_text("text") + "\n"
-    except Exception as e:
-        st.error(f"Error extracting text: {e}")
-    return text
+# Load Hugging Face model for embeddings (384-dimension)
+embed_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-# Store PDF metadata in Pinecone
-def store_pdf_in_pinecone(pdf_name, text_content):
-    vector = [0] * 512  # Placeholder vector, replace with real embeddings
-    index.upsert([(pdf_name, vector, {"filename": pdf_name, "content": text_content})])
-
-# Retrieve stored PDFs from Pinecone
-def get_stored_pdfs():
-    stored_pdfs = []
-    try:
-        query_result = index.query(vector=[0] * 512, top_k=10, include_metadata=True)  
-        for match in query_result.get('matches', []):
-            if 'filename' in match['metadata']:
-                stored_pdfs.append(match['metadata']['filename'])
-    except Exception as e:
-        st.error(f"🔴 Error retrieving PDFs: {e}")
-    return stored_pdfs
-
-# Streamlit UI Setup
 st.set_page_config(page_title="AI-Powered Legal HelpDesk", layout="wide")
-st.title("🛡️ AI-Powered Legal HelpDesk for Saudi Arabia")
 
-# Sidebar - Stored PDFs
-st.sidebar.title("📂 Stored PDFs")
-stored_pdfs = get_stored_pdfs()
-if stored_pdfs:
-    for pdf in stored_pdfs:
-        st.sidebar.write(f"📄 {pdf}")
-else:
-     st.sidebar.write("No PDFs stored yet.")
+# Sidebar UI for PDF Selection
+st.sidebar.header("📂 Stored PDFs")
 
-# PDF Upload Section
-st.subheader("📄 Upload or Select a PDF")
-pdf_source = st.radio("Select PDF Source", ["Upload from PC", "Choose from the Document Storage"])
+# Function to get stored PDFs from Pinecone
+def get_stored_pdfs():
+    """Fetch unique PDF names stored in Pinecone."""
+    stats = index.describe_index_stats()
+    vector_count = stats["namespaces"][""]["vector_count"]
+    
+    # Fetch stored vectors
+    results = index.query(vector=[0] * 384, top_k=min(vector_count, 10), include_metadata=True)
 
-if pdf_source == "Upload from PC":
-    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
-    if uploaded_file:
-        temp_dir = tempfile.mkdtemp()
-        file_path = os.path.join(temp_dir, uploaded_file.name)
-        with open(file_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        st.success(f"✅ {uploaded_file.name} uploaded successfully!")
+    # Extract unique PDF names
+    return list(set(match["metadata"]["pdf_name"] for match in results["matches"] if "pdf_name" in match["metadata"]))
 
-        # Extract text & store in Pinecone
-        pdf_text = extract_text_from_pdf(file_path)
-        store_pdf_in_pinecone(uploaded_file.name, pdf_text)
+# Function to extract text from PDF
+def extract_text_from_pdf(pdf_file):
+    reader = PdfReader(pdf_file)
+    return "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
 
-# Language Selection
-st.subheader("🌍 Choose Input & Response Language")
-input_language = st.radio("Choose Input Language", ["English", "Arabic"])
-response_language = st.radio("Choose Response Language", ["English", "Arabic"])
+# Function to store vectors in Pinecone
+def store_vectors(embeddings, pdf_name):
+    """Store embeddings in Pinecone with unique keys."""
+    for idx, embedding in enumerate(embeddings):
+        index.upsert(vectors=[
+            (f"{pdf_name}_{idx}_{uuid.uuid4().hex[:8]}", embedding, {"pdf_name": pdf_name})
+        ])
+
+# Upload and Process PDF
+st.header("📜 AI-Powered Legal HelpDesk")
+st.subheader("Select PDF Source")
+
+uploaded_file = st.file_uploader("Upload a PDF", type="pdf")
+
+if uploaded_file:
+    pdf_name = uploaded_file.name
+    pdf_text = extract_text_from_pdf(uploaded_file)
+
+    # Split text into chunks
+    text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+    chunks = text_splitter.split_text(pdf_text)
+
+    # Generate embeddings
+    embeddings = embed_model.embed_documents(chunks)
+
+    # Store vectors in Pinecone
+    store_vectors(embeddings, pdf_name)
+
+    st.success(f"✅ PDF '{pdf_name}' uploaded and processed successfully!")
+
+    # Refresh the dropdown with new PDFs
+    st.sidebar.selectbox("Select a PDF", options=get_stored_pdfs(), key="pdf_dropdown")
+
+# Display Available PDFs
+st.sidebar.selectbox("Select a PDF", options=get_stored_pdfs(), key="pdf_dropdown")
 
 # Question Input
-st.subheader("❓ Ask a legal question:")
-user_query = st.text_input("Enter your legal query...")
+st.subheader("Ask a legal question:")
+query = st.text_input("Type your question here...")
 
-# Query Processing (Placeholder for AI model)
-if st.button("🔍 Submit"):
-    if user_query:
-        st.success("🧐 Searching for relevant legal information...")
-        # Placeholder AI response
-        response = "🔹 AI-generated response based on legal documents."
-        st.write(response)
-    else:
-        st.warning("⚠️ Please enter a question.")
+if query:
+    # Search in Pinecone
+    query_embedding = embed_model.embed_query(query)
+    search_results = index.query(vector=query_embedding, top_k=5, include_metadata=True)
+
+    st.subheader("📖 Relevant Legal Sections:")
+    for match in search_results["matches"]:
+        st.write(f"🔹 **From PDF:** {match['metadata']['pdf_name']}")
+        st.write(match["metadata"].get("text", "No text available"))
+        st.write("---")
