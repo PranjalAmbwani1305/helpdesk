@@ -1,140 +1,70 @@
-import os
 import streamlit as st
-import fitz  # PyMuPDF
 import pinecone
-import hashlib
-import asyncio
-import torch
-from transformers import AutoTokenizer, AutoModel
-from deep_translator import GoogleTranslator  # Translation Support
+import tempfile
+import os
 
-# 🌟 Set up Pinecone API
+# Initialize Pinecone with environment variable
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-index_name = "helpdesk"
+INDEX_NAME = "helpdesk"
 
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
-index = pc.Index(index_name)
+index = pc.Index(INDEX_NAME)
 
-# ✅ Ensure Async Event Loop Setup
-try:
-    asyncio.get_running_loop()
-except RuntimeError:
-    asyncio.set_event_loop(asyncio.new_event_loop())
+# Function to retrieve stored PDFs from Pinecone
+def get_stored_pdfs():
+    stored_pdfs = []
+    query_result = index.query(vector=[0] * 512, top_k=10, include_metadata=True)  # Dummy vector query
+    for match in query_result['matches']:
+        if 'filename' in match['metadata']:
+            stored_pdfs.append(match['metadata']['filename'])
+    return stored_pdfs
 
-# 🔍 Load Hugging Face Model for Text Embeddings
-tokenizer = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
-model = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
+# Streamlit UI
+st.set_page_config(page_title="AI-Powered Legal HelpDesk", layout="wide")
 
-# 🌍 Translation Function
-def translate_text(text, target_lang):
-    return GoogleTranslator(source="auto", target=target_lang).translate(text)
+st.title("🛡️ AI-Powered Legal HelpDesk for Saudi Arabia")
 
-# 🎯 Function to generate text embeddings
-def get_embedding(text):
-    inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
-    with torch.no_grad():
-        outputs = model(**inputs)
-    return outputs.last_hidden_state[:, 0, :].squeeze().numpy().tolist()  # Convert to list
+# Sidebar - Stored PDFs
+st.sidebar.title("📂 Stored PDFs")
+stored_pdfs = get_stored_pdfs()
 
-# 📜 Function to extract and chunk text by article from PDF
-def extract_articles_from_pdf(pdf_path):
-    doc = fitz.open(pdf_path)
-    articles = []
-    current_article = ""
+if stored_pdfs:
+    for pdf in stored_pdfs:
+        st.sidebar.write(f"📄 {pdf}")
+else:
+    st.sidebar.write("No PDFs stored yet.")
 
-    for page in doc:
-        text = page.get_text("text")
-        for line in text.split("\n"):
-            if line.lower().startswith("article") or line.lower().startswith("section"):
-                if current_article:
-                    articles.append(current_article.strip())
-                current_article = line
-            else:
-                current_article += " " + line
-        
-    if current_article:
-        articles.append(current_article.strip())
+# PDF Upload Options
+st.subheader("Select PDF Source")
+pdf_source = st.radio("Select PDF Source", ["Upload from PC", "Choose from the Document Storage"])
 
-    return articles if articles else None
-
-# 📂 Function to upload and store PDFs in Pinecone (article-wise)
-def process_and_store_pdf(uploaded_file):
-    if uploaded_file is not None:
-        pdf_name = uploaded_file.name.replace(" ", "_").lower()
-        file_path = os.path.join("/tmp", pdf_name)
-
+if pdf_source == "Upload from PC":
+    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
+    
+    if uploaded_file:
+        temp_dir = tempfile.mkdtemp()
+        file_path = os.path.join(temp_dir, uploaded_file.name)
         with open(file_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
+        st.success(f"✅ {uploaded_file.name} uploaded successfully!")
 
-        articles = extract_articles_from_pdf(file_path)
+# Language Selection
+st.subheader("Choose Input Language")
+input_language = st.radio("Choose Input Language", ["English", "Arabic"])
 
-        if not articles:
-            st.warning("⚠️ No articles detected in the PDF.")
-            return
+st.subheader("Choose Response Language")
+response_language = st.radio("Choose Response Language", ["English", "Arabic"])
 
-        for idx, article in enumerate(articles):
-            article_id = hashlib.md5(f"{pdf_name}_{idx}".encode()).hexdigest()
-            vector = get_embedding(article)
+# Question Input
+st.subheader("Ask a question (in English or Arabic):")
+user_query = st.text_input("Enter your legal query...")
 
-            index.upsert(
-                vectors=[(article_id, vector, {"pdf_name": pdf_name, "content": article})],
-                namespace=pdf_name
-            )
-
-        st.success(f"✅ PDF '{pdf_name}' processed and stored with {len(articles)} articles!")
-
-# 🎨 UI: Main Page
-st.markdown("<h1 style='text-align: center;'>📜 AI-Powered Legal HelpDesk</h1>", unsafe_allow_html=True)
-
-# 📂 PDF Selection
-st.subheader("📂 Select PDF Source")
-col1, col2 = st.columns(2)
-with col1:
-    st.button("📥 Upload from PC")
-with col2:
-    st.button("📂 Choose from Document Storage")
-
-# 📑 File Upload
-uploaded_file = st.file_uploader("📂 Upload PDF", type=["pdf"])
-st.markdown("**Limit: 200MB per file**")
-
-if uploaded_file:
-    process_and_store_pdf(uploaded_file)
-
-# 🌍 Language Selection
-st.subheader("🌍 Choose Input Language")
-input_language = st.radio("Select Input Language", ["English", "Arabic"], key="input_lang")
-
-st.subheader("🌍 Choose Response Language")
-response_language = st.radio("Select Response Language", ["English", "Arabic"], key="response_lang")
-
-# 🔍 Query Section
-st.subheader("🤖 Ask a Legal Question")
-query = st.text_area("✍️ Type your question here:")
-
-if st.button("🔎 Get Answer"):
-    if uploaded_file:
-        translated_query = translate_text(query, "en") if input_language == "Arabic" else query
-        query_vector = get_embedding(translated_query)
-
-        try:
-            # Query Pinecone with selected namespace
-            results = index.query(
-                namespace=uploaded_file.name.replace(" ", "_").lower(),
-                queries=[query_vector],  
-                top_k=5,
-                include_metadata=True
-            )
-
-            answer = results["matches"][0]["metadata"]["content"] if results["matches"] else "⚠️ No relevant information found."
-
-            translated_answer = translate_text(answer, "ar") if response_language == "Arabic" else answer
-
-            st.markdown("### ✅ AI Answer:")
-            st.info(translated_answer)
-
-        except Exception as e:
-            st.error(f"⚠️ Pinecone query failed: {str(e)}")
-
+# Process Query (Placeholder)
+if st.button("Submit"):
+    if user_query:
+        st.success("🔍 Searching for relevant legal information...")
+        # Here, you would integrate LLM-based query processing
+        response = "Sample AI-generated response based on legal documents."
+        st.write(response)
     else:
-        st.error("⚠️ Please upload a PDF before asking a question.")
+        st.warning("⚠️ Please enter a question.")
