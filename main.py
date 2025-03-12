@@ -4,6 +4,7 @@ import os
 import tempfile
 import fitz  # PyMuPDF for extracting text from PDFs
 
+from pinecone import Pinecone
 # Initialize Pinecone
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 INDEX_NAME = "helpdesk"
