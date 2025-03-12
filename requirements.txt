@@ -16,3 +16,4 @@ deep-translator
 pytesseract
 pdf2image
 pillow
+pdfplumber
