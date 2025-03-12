@@ -1,19 +1,18 @@
 import streamlit as st
-import pinecone
-import PyPDF2
 import os
 import re
+import PyPDF2
 from deep_translator import GoogleTranslator
 from sentence_transformers import SentenceTransformer
-
-# Initialize Pinecone
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 from pinecone import Pinecone
+
+# Initialize Pinecone with your API key
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 pc = Pinecone(api_key=PINECONE_API_KEY)
-index_name = "helpdesk"
+index_name = "helpdesk"  # Pinecone index name
 index = pc.Index(index_name)
 
-# Load Hugging Face Model (Sentence Transformer)
+# Load SentenceTransformer Model
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
 # Regex patterns for Chapters & Articles
@@ -26,9 +25,6 @@ def extract_text_from_pdf(pdf_path):
         reader = PyPDF2.PdfReader(file)
         text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
     
-    # Debugging: Print the raw text to check for issues
-    print("Extracted Text:\n", text[:1000])  # Print the first 1000 characters of the text for debugging
-    
     chapters, articles = [], []
     current_chapter, current_chapter_content = "Uncategorized", []
     current_article, current_article_content = None, []
@@ -36,9 +32,6 @@ def extract_text_from_pdf(pdf_path):
     
     for para in paragraphs:
         para = para.strip()
-        
-        # Debugging: Print each paragraph to check if regex matches correctly
-        print("Processing Paragraph:", para)
         
         if re.match(chapter_pattern, para):
             if current_chapter != "Uncategorized":
