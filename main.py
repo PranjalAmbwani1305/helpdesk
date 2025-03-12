@@ -67,6 +67,7 @@ def extract_text_from_pdf(pdf_path):
 
 def store_vectors(chapters, articles, pdf_name):
     """Stores extracted chapters and articles in Pinecone with correct numbering."""
+    # Store chapters
     for i, chapter in enumerate(chapters):
         chapter_vector = model.encode(chapter['content']).tolist()
         index.upsert([(
@@ -74,6 +75,7 @@ def store_vectors(chapters, articles, pdf_name):
             {"pdf_name": pdf_name, "text": chapter['content'], "type": "chapter"}
         )])
     
+    # Store articles
     for i, article in enumerate(articles):
         # Extract article number correctly
         article_number_match = re.search(r'Article (\d+|[A-Za-z]+)', article['title'], re.IGNORECASE)
