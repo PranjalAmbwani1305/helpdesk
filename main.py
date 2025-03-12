@@ -6,13 +6,13 @@ from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import CharacterTextSplitter
 from PyPDF2 import PdfReader
 
-# Initialize Pinecone
-PINECONE_API_KEY = "your_pinecone_api_key"
-PINECONE_ENV = "your_pinecone_environment"
-PINECONE_INDEX_NAME = "your_pinecone_index"
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+from pinecone import Pinecone
+pc = Pinecone(api_key=PINECONE_API_KEY)
+index_name = "helpdesk"
 
-pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
-index = pinecone.Index(PINECONE_INDEX_NAME)
+
+index = pc.Index(index_name)
 
 # Load Hugging Face model for embeddings
 embed_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
