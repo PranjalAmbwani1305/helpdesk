@@ -22,8 +22,6 @@ st.set_page_config(page_title="AI-Powered Legal HelpDesk", layout="wide")
 
 # Sidebar UI for PDF Selection
 st.sidebar.header("📂 Stored PDFs")
-stored_pdfs = []
-
 
 def get_stored_pdfs():
     """Fetch unique PDF names stored in Pinecone."""
@@ -48,48 +46,14 @@ def get_stored_pdfs():
         st.error(f"Error fetching PDFs: {e}")
         return []
 
-
 stored_pdfs = get_stored_pdfs()
-selected_pdf = st.sidebar.selectbox("Select a PDF", options=stored_pdfs if stored_pdfs else ["No PDFs Found"], key="pdf_dropdown")
 
+# Ensure selectbox is used only ONCE
+selected_pdf = None
+if stored_pdfs:
+    selected_pdf = st.sidebar.selectbox("Select a PDF", options=stored_pdfs, key="pdf_dropdown")
 
-# Function to extract text from PDF
-def extract_text_from_pdf(pdf_file):
-    try:
-        reader = PdfReader(pdf_file)
-        text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
-        return text
-    except Exception:
-        return None
-
-
-# Function to extract text using OCR for scanned PDFs
-def extract_text_with_ocr(pdf_file):
-    try:
-        images = convert_from_bytes(pdf_file.read())
-        extracted_text = "\n".join([pytesseract.image_to_string(img) for img in images])
-        return extracted_text
-    except Exception:
-        return None
-
-
-# Function to store vectors in Pinecone
-def store_vectors(embeddings, chunks, pdf_name):
-    """Store embeddings in Pinecone with article-based IDs."""
-    for idx, (embedding, chunk) in enumerate(zip(embeddings, chunks)):
-        article_id = f"{pdf_name}-article-{idx+1}"  # Unique Article ID
-        index.upsert(vectors=[
-            (article_id, embedding, {
-                "pdf_name": pdf_name,
-                "article_id": article_id,
-                "title": f"Article {idx+1}",
-                "text": chunk,
-                "type": "article"
-            })
-        ])
-
-
-# Upload and Process PDF
+# File Upload
 st.header("📜 AI-Powered Legal HelpDesk")
 st.subheader("Select PDF Source")
 
@@ -97,7 +61,13 @@ uploaded_file = st.file_uploader("Upload a PDF", type="pdf")
 
 if uploaded_file is not None:
     pdf_name = uploaded_file.name
-    pdf_text = extract_text_from_pdf(uploaded_file)
+    pdf_text = None
+
+    try:
+        reader = PdfReader(uploaded_file)
+        pdf_text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+    except:
+        pass
 
     if not pdf_text:
         st.warning(f"❌ Could not extract text from {pdf_name}. Trying OCR...")
@@ -107,33 +77,34 @@ if uploaded_file is not None:
     if not pdf_text:
         st.error("❌ This document appears to be an image-based PDF and OCR could not extract text.")
     else:
-        # Split text into chunks
+        # Process and store
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
         chunks = text_splitter.split_text(pdf_text)
 
-        # Generate embeddings
         embeddings = embed_model.embed_documents(chunks)
 
-        # Store vectors in Pinecone
-        store_vectors(embeddings, chunks, pdf_name)
+        for idx, (embedding, chunk) in enumerate(zip(embeddings, chunks)):
+            article_id = f"{pdf_name}-article-{idx+1}"  # Unique Article ID
+            index.upsert(vectors=[
+                (article_id, embedding, {
+                    "pdf_name": pdf_name,
+                    "article_id": article_id,
+                    "title": f"Article {idx+1}",
+                    "text": chunk,
+                    "type": "article"
+                })
+            ])
 
         st.success(f"✅ PDF '{pdf_name}' uploaded and processed successfully!")
 
-        # Refresh the dropdown with new PDFs
+        # Refresh stored PDFs
         stored_pdfs = get_stored_pdfs()
-        st.sidebar.selectbox("Select a PDF", options=stored_pdfs, key="pdf_dropdown")
-
-
-# Display Available PDFs
-if stored_pdfs:
-    st.sidebar.selectbox("Select a PDF", options=stored_pdfs, key="pdf_dropdown")
-
 
 # Question Input
 st.subheader("Ask a legal question:")
 query = st.text_input("Type your question here...")
 
-if query and selected_pdf != "No PDFs Found":
+if query and selected_pdf:
     query_embedding = embed_model.embed_query(query)
     search_results = index.query(vector=query_embedding, top_k=5, include_metadata=True)
 
@@ -144,7 +115,7 @@ if query and selected_pdf != "No PDFs Found":
         title = match["metadata"].get("title", f"Article {article_id.split('-')[-1]}" if "article-" in article_id else "Unknown")
         text = match["metadata"].get("text", "No text available")
 
-        # Ensure it shows the correct Article ID from storage
+        # Display correct Article ID
         st.write(f"🔹 **From PDF:** {pdf_name}")
         st.write(f"📜 **{title}** (ID: `{article_id}`)")
         st.write(text)
