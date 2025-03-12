@@ -1,4 +1,5 @@
 import os
+import re
 import streamlit as st
 import fitz  # PyMuPDF
 import pinecone
@@ -12,6 +13,8 @@ from deep_translator import GoogleTranslator  # Translation Support
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 index_name = "helpdesk"
 
+if not PINECONE_API_KEY:
+    st.error("⚠️ Pinecone API Key is missing! Set it in environment variables.")
 
 # 🔹 Initialize Pinecone
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
@@ -38,15 +41,22 @@ def get_embedding(text):
         outputs = model(**inputs)
     return outputs.last_hidden_state[:, 0, :].squeeze().numpy().tolist()  # Convert to list
 
-# 📜 Extract text from PDF
-def extract_text_from_pdf(pdf_path):
+# 📜 Extract text from PDF and split into articles
+def extract_articles_from_pdf(pdf_path):
     doc = fitz.open(pdf_path)
-    text = ""
+    full_text = ""
+    
     for page in doc:
-        text += page.get_text("text") + "\n"
-    return text
+        full_text += page.get_text("text") + "\n"
 
-# 📂 Upload and store PDFs in Pinecone
+    # 📝 Split text into articles based on "Article", "Section", or numbering like 1., 2., etc.
+    article_pattern = re.compile(r'(Article\s\d+|Section\s\d+|\n\d+\.)', re.IGNORECASE)
+    articles = re.split(article_pattern, full_text)
+
+    # Filter out empty articles
+    return [article.strip() for article in articles if article.strip()]
+
+# 📂 Upload and store PDFs in Pinecone (Article-wise)
 def process_and_store_pdf(uploaded_file):
     if uploaded_file is not None:
         pdf_name = uploaded_file.name.replace(" ", "_").lower()
@@ -55,19 +65,22 @@ def process_and_store_pdf(uploaded_file):
         with open(file_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
 
-        pdf_text = extract_text_from_pdf(file_path)
+        articles = extract_articles_from_pdf(file_path)
 
-        # Generate unique ID using hash
-        pdf_id = hashlib.md5(pdf_name.encode()).hexdigest()
-        vector = get_embedding(pdf_text)
+        if not articles:
+            st.error("⚠️ No articles detected in the PDF.")
+            return
 
-        # Store in Pinecone
-        index.upsert(
-            vectors=[(pdf_id, vector, {"pdf_name": pdf_name, "content": pdf_text})], 
-            namespace=pdf_name
-        )
+        # 🔹 Store each article separately
+        vectors = []
+        for idx, article in enumerate(articles):
+            article_id = hashlib.md5((pdf_name + str(idx)).encode()).hexdigest()
+            vector = get_embedding(article)
 
-        st.success(f"✅ PDF '{pdf_name}' uploaded and stored!")
+            vectors.append((article_id, vector, {"pdf_name": pdf_name, "article": article}))
+
+        index.upsert(vectors=vectors, namespace=pdf_name)
+        st.success(f"✅ PDF '{pdf_name}' uploaded with {len(articles)} articles stored!")
 
 # 📑 Get available PDFs
 def get_stored_pdfs():
@@ -111,12 +124,12 @@ if st.button("🔎 Get Answer" if language == "English" else "🔎 احصل عل
             results = index.query(
                 namespace=selected_pdf,
                 queries=[query_vector],  # Ensure it's a list
-                top_k=5,
+                top_k=3,
                 include_metadata=True
             )
 
             if results["matches"]:
-                answer = results["matches"][0]["metadata"]["content"]
+                answer = results["matches"][0]["metadata"]["article"]
             else:
                 answer = "⚠️ No relevant information found." if language == "English" else "⚠️ لم يتم العثور على معلومات ذات صلة."
 
@@ -130,4 +143,3 @@ if st.button("🔎 Get Answer" if language == "English" else "🔎 احصل عل
 
     else:
         st.error("⚠️ Please select a PDF before asking a question." if language == "English" else "⚠️ يرجى تحديد ملف PDF قبل طرح سؤال.")     
-
