@@ -1,5 +1,7 @@
 pinecone
+sentence-transformers
 langchain
+uuid
 torch
 transformers
 sentence-transformers
