@@ -1,6 +1,6 @@
 import streamlit as st
 import pinecone
-import pdfplumber
+import PyPDF2
 import os
 import re
 from deep_translator import GoogleTranslator
@@ -22,13 +22,12 @@ article_pattern = r'^(Article (\d+|[A-Za-z]+)):.*$'
 
 def extract_text_from_pdf(pdf_path):
     """Extracts and structures text from the PDF."""
-    text = ""
-    with pdfplumber.open(pdf_path) as pdf:
-        for page in pdf.pages:
-            text += page.extract_text() + "\n"
+    with open(pdf_path, "rb") as file:
+        reader = PyPDF2.PdfReader(file)
+        text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
     
-    print("Extracted Text:")
-    print(text[:500])  # Print the first 500 characters of the extracted text for debugging
+    # Debugging: Print the raw text to check for issues
+    print("Extracted Text:\n", text[:1000])  # Print the first 1000 characters of the text for debugging
     
     chapters, articles = [], []
     current_chapter, current_chapter_content = "Uncategorized", []
@@ -37,6 +36,9 @@ def extract_text_from_pdf(pdf_path):
     
     for para in paragraphs:
         para = para.strip()
+        
+        # Debugging: Print each paragraph to check if regex matches correctly
+        print("Processing Paragraph:", para)
         
         if re.match(chapter_pattern, para):
             if current_chapter != "Uncategorized":
@@ -151,11 +153,6 @@ if pdf_source == "Upload from PC":
             f.write(uploaded_file.read())
         
         chapters, articles = extract_text_from_pdf(temp_pdf_path)
-        
-        # Debug: Print extracted chapters and articles
-        st.write(f"Chapters extracted: {len(chapters)}")
-        st.write(f"Articles extracted: {len(articles)}")
-
         store_vectors(chapters, articles, uploaded_file.name)
         selected_pdf = uploaded_file.name
         st.success("✅ PDF uploaded and processed successfully!")
