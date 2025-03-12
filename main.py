@@ -5,6 +5,7 @@ import pinecone
 import hashlib
 import asyncio
 import torch
+import re
 from transformers import AutoTokenizer, AutoModel
 from deep_translator import GoogleTranslator  # Translation Support
 
@@ -36,15 +37,28 @@ def get_embedding(text):
         outputs = model(**inputs)
     return outputs.last_hidden_state[:, 0, :].squeeze().numpy().tolist()  # Convert to list
 
-# 📜 Function to extract text from PDF
-def extract_text_from_pdf(pdf_path):
+# 📜 Function to extract and chunk text from PDF
+def extract_and_chunk_pdf(pdf_path):
     doc = fitz.open(pdf_path)
-    text = ""
+    chunks = []
+    
     for page in doc:
-        text += page.get_text("text") + "\n"
-    return text
+        text = page.get_text("text")
+        articles = re.split(r'Article\s+\d+', text)  # Split by "Article X"
+        article_numbers = re.findall(r'Article\s+\d+', text)  # Extract article numbers
 
-# 📂 Function to upload and store PDFs in Pinecone
+        for i, article_text in enumerate(articles[1:], start=0):  # Ignore first empty split
+            chunk = {
+                "id": hashlib.md5(f"{pdf_path}-article-{i}".encode()).hexdigest(),
+                "title": article_numbers[i] if i < len(article_numbers) else f"Section {i+1}",
+                "text": article_text.strip(),
+                "type": "article"
+            }
+            chunks.append(chunk)
+
+    return chunks
+
+# 📂 Function to upload and store PDF chunks in Pinecone
 def process_and_store_pdf(uploaded_file):
     if uploaded_file is not None:
         pdf_name = uploaded_file.name.replace(" ", "_").lower()
@@ -53,16 +67,13 @@ def process_and_store_pdf(uploaded_file):
         with open(file_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
 
-        pdf_text = extract_text_from_pdf(file_path)
+        pdf_chunks = extract_and_chunk_pdf(file_path)
 
-        # Generate unique ID using hash
-        pdf_id = hashlib.md5(pdf_name.encode()).hexdigest()
-        vector = get_embedding(pdf_text)
+        for chunk in pdf_chunks:
+            vector = get_embedding(chunk["text"])
+            index.upsert(vectors=[(chunk["id"], vector, {"title": chunk["title"], "text": chunk["text"], "pdf_name": pdf_name})], namespace=pdf_name)
 
-        # Store in Pinecone under a namespace
-        index.upsert(vectors=[(pdf_id, vector, {"pdf_name": pdf_name, "content": pdf_text})], namespace=pdf_name)
-
-        st.success(f"✅ PDF '{pdf_name}' uploaded and stored in namespace '{pdf_name}'!")
+        st.success(f"✅ PDF '{pdf_name}' uploaded and processed into chunks!")
 
 # 📑 Function to get available namespaces
 def get_stored_namespaces():
@@ -109,15 +120,19 @@ if st.button("🔎 Get Answer" if language == "English" else "🔎 احصل عل
                 include_metadata=True
             )
 
-            answer = results["matches"][0]["metadata"]["content"] if results["matches"] else "⚠️ No relevant information found." if language == "English" else "⚠️ لم يتم العثور على معلومات ذات صلة."
+            if results["matches"]:
+                best_match = results["matches"][0]["metadata"]
+                answer_text = best_match["text"]
 
-            translated_answer = translate_text(answer, "ar") if language == "Arabic" else answer
+                translated_answer = translate_text(answer_text, "ar") if language == "Arabic" else answer_text
 
-            st.markdown("### ✅ AI Answer:" if language == "English" else "### ✅ إجابة الذكاء الاصطناعي:")
-            st.info(translated_answer)
+                st.markdown("### ✅ AI Answer:" if language == "English" else "### ✅ إجابة الذكاء الاصطناعي:")
+                st.info(translated_answer)
+            else:
+                st.warning("⚠️ No relevant information found." if language == "English" else "⚠️ لم يتم العثور على معلومات ذات صلة.")
         
         except Exception as e:
             st.error(f"⚠️ Pinecone query failed: {str(e)}")
 
     else:
-        st.error("⚠️ Please select a PDF namespace before asking a question." if language == "English" else "⚠️ يرجى تحديد مساحة اسم ملف PDF قبل طرح سؤال.")
+        st.error("⚠️ Please select a PDF namespace before asking a question." if language == "English" else "⚠️ يرجى تحديد مساحة اسم ملف PDF قبل طرح سؤال.")  
