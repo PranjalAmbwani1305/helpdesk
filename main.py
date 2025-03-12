@@ -1,11 +1,10 @@
 import streamlit as st
 import pinecone
-import PyPDF2
+import pdfplumber
 import os
 import re
 from deep_translator import GoogleTranslator
 from sentence_transformers import SentenceTransformer
-import tempfile
 
 # Initialize Pinecone
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
@@ -23,9 +22,13 @@ article_pattern = r'^(Article (\d+|[A-Za-z]+)):.*$'
 
 def extract_text_from_pdf(pdf_path):
     """Extracts and structures text from the PDF."""
-    with open(pdf_path, "rb") as file:
-        reader = PyPDF2.PdfReader(file)
-        text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+    text = ""
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            text += page.extract_text() + "\n"
+    
+    print("Extracted Text:")
+    print(text[:500])  # Print the first 500 characters of the extracted text for debugging
     
     chapters, articles = [], []
     current_chapter, current_chapter_content = "Uncategorized", []
@@ -64,7 +67,6 @@ def store_vectors(chapters, articles, pdf_name):
     """Stores extracted chapters and articles in Pinecone with correct numbering."""
     for i, chapter in enumerate(chapters):
         chapter_vector = model.encode(chapter['content']).tolist()
-        print(f"Chapter {i} vector: {chapter_vector[:5]}...")  # Print part of the vector for debugging
         index.upsert([(
             f"{pdf_name}-chapter-{i}", chapter_vector, 
             {"pdf_name": pdf_name, "text": chapter['content'], "type": "chapter"}
@@ -79,7 +81,6 @@ def store_vectors(chapters, articles, pdf_name):
             article_number = str(i)  # Fallback to index if no article number is found
         
         article_vector = model.encode(article['content']).tolist()
-        print(f"Article {article_number} vector: {article_vector[:5]}...")  # Print part of the vector for debugging
         index.upsert([(
             f"{pdf_name}-article-{article_number}", article_vector, 
             {"pdf_name": pdf_name, "chapter": article['chapter'], "text": article['content'], "type": "article", "title": article['title']}
@@ -145,14 +146,13 @@ selected_pdf = None
 if pdf_source == "Upload from PC":
     uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
     if uploaded_file is not None:
-        # Handle temporary file creation
-        temp_pdf_path = os.path.join(tempfile.gettempdir(), uploaded_file.name)
+        temp_pdf_path = os.path.join("/tmp", uploaded_file.name)
         with open(temp_pdf_path, "wb") as f:
             f.write(uploaded_file.read())
-        st.write(f"Temporary PDF path: {temp_pdf_path}")
-
-        # Extract and store vectors
+        
         chapters, articles = extract_text_from_pdf(temp_pdf_path)
+        
+        # Debug: Print extracted chapters and articles
         st.write(f"Chapters extracted: {len(chapters)}")
         st.write(f"Articles extracted: {len(articles)}")
 
