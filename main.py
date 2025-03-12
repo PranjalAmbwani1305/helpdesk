@@ -12,8 +12,6 @@ from deep_translator import GoogleTranslator  # Translation Support
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 index_name = "helpdesk"
 
-if not PINECONE_API_KEY:
-    st.error("⚠️ Pinecone API Key is missing! Set it in environment variables.")
 
 # 🔹 Initialize Pinecone
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
@@ -58,33 +56,23 @@ def process_and_store_pdf(uploaded_file):
             f.write(uploaded_file.getbuffer())
 
         pdf_text = extract_text_from_pdf(file_path)
-        
-        # ✅ Debug: Check extracted text
-        st.write(f"🔍 Extracted Text: {pdf_text[:500]}")
 
         # Generate unique ID using hash
         pdf_id = hashlib.md5(pdf_name.encode()).hexdigest()
         vector = get_embedding(pdf_text)
 
-        # ✅ Debug: Check embedding
-        st.write(f"🧠 Embedding (First 5 values): {vector[:5]}")
-
         # Store in Pinecone
-        response = index.upsert(
+        index.upsert(
             vectors=[(pdf_id, vector, {"pdf_name": pdf_name, "content": pdf_text})], 
             namespace=pdf_name
         )
 
-        # ✅ Debug: Check upsert response
-        st.write(f"📝 Pinecone Upsert Response: {response}")
+        st.success(f"✅ PDF '{pdf_name}' uploaded and stored!")
 
-        st.success(f"✅ PDF '{pdf_name}' uploaded and stored in namespace '{pdf_name}'!")
-
-# 📑 Get available namespaces
-def get_stored_namespaces():
+# 📑 Get available PDFs
+def get_stored_pdfs():
     try:
         index_stats = index.describe_index_stats()
-        st.write(f"📊 Index Stats: {index_stats}")  # Debugging
         
         if "namespaces" in index_stats:
             return list(index_stats["namespaces"].keys())
@@ -92,10 +80,10 @@ def get_stored_namespaces():
         st.error(f"⚠️ Pinecone error: {str(e)}")
     return []
 
-# 🎨 UI: Sidebar for Available Namespaces
-st.sidebar.title("📂 Available PDFs (Namespaces)")
-stored_namespaces = get_stored_namespaces()
-selected_namespace = st.sidebar.selectbox("📜 Select a PDF Namespace", stored_namespaces if stored_namespaces else ["No PDFs Found"])
+# 🎨 UI: Sidebar for Available PDFs
+st.sidebar.title("📂 Available PDFs")
+stored_pdfs = get_stored_pdfs()
+selected_pdf = st.sidebar.selectbox("📜 Select a PDF", stored_pdfs if stored_pdfs else ["No PDFs Found"])
 
 # 🌍 Language Selection
 language = st.sidebar.radio("🌍 Select Language", ["English", "Arabic"])
@@ -114,21 +102,18 @@ st.subheader("🤖 Ask a Legal Question" if language == "English" else "🤖 ا�
 query = st.text_area("✍️ Type your question here:" if language == "English" else "✍️ اكتب سؤالك هنا:")
 
 if st.button("🔎 Get Answer" if language == "English" else "🔎 احصل على الإجابة"):
-    if selected_namespace and selected_namespace != "No PDFs Found":
+    if selected_pdf and selected_pdf != "No PDFs Found":
         translated_query = translate_text(query, "en") if language == "Arabic" else query
         query_vector = get_embedding(translated_query)
 
         try:
-            # Query Pinecone with selected namespace
+            # Query Pinecone with selected PDF
             results = index.query(
-                namespace=selected_namespace,
+                namespace=selected_pdf,
                 queries=[query_vector],  # Ensure it's a list
                 top_k=5,
                 include_metadata=True
             )
-
-            # ✅ Debug: Check query results
-            st.write(f"🔍 Query Results: {results}")
 
             if results["matches"]:
                 answer = results["matches"][0]["metadata"]["content"]
@@ -144,4 +129,5 @@ if st.button("🔎 Get Answer" if language == "English" else "🔎 احصل عل
             st.error(f"⚠️ Pinecone query failed: {str(e)}")
 
     else:
-        st.error("⚠️ Please select a PDF namespace before asking a question." if language == "English" else "⚠️ يرجى تحديد مساحة اسم ملف PDF قبل طرح سؤال.")     
+        st.error("⚠️ Please select a PDF before asking a question." if language == "English" else "⚠️ يرجى تحديد ملف PDF قبل طرح سؤال.")     
+
