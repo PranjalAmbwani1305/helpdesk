@@ -3,6 +3,7 @@ import pinecone
 import PyPDF2
 import os
 import re
+import asyncio
 from deep_translator import GoogleTranslator
 from sentence_transformers import SentenceTransformer
 
@@ -11,9 +12,14 @@ PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 from pinecone import Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
+
+# Check if index exists, otherwise create it
+if index_name not in pc.list_indexes():
+    pc.create_index(index_name, dimension=384, metric="cosine")
+
 index = pc.Index(index_name)
 
-# Load Hugging Face Model
+# Load Hugging Face Model (Sentence Transformer)
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
 # Regex patterns for Chapters & Articles
@@ -61,48 +67,55 @@ def extract_text_from_pdf(pdf_path):
 
 def store_vectors(chapters, articles, pdf_name):
     """Stores extracted chapters and articles in Pinecone."""
-    namespace = pdf_name.replace(" ", "_").lower()  # Unique namespace for each PDF
-
-    batch = []
     for i, chapter in enumerate(chapters):
         chapter_vector = model.encode(chapter['content']).tolist()
-        batch.append((
+        index.upsert([(
             f"{pdf_name}-chapter-{i}", chapter_vector, 
             {"pdf_name": pdf_name, "text": chapter['content'], "type": "chapter"}
-        ))
+        )])
     
     for i, article in enumerate(articles):
         article_number_match = re.search(r'Article (\d+|[A-Za-z]+)', article['title'], re.IGNORECASE)
         article_number = article_number_match.group(1) if article_number_match else str(i)
         article_vector = model.encode(article['content']).tolist()
-        batch.append((
+        index.upsert([(
             f"{pdf_name}-article-{article_number}", article_vector, 
             {"pdf_name": pdf_name, "chapter": article['chapter'], "text": article['content'], "type": "article", "title": article['title']}
-        ))
-
-    # Insert batch into Pinecone
-    if batch:
-        index.upsert(batch, namespace=namespace)
-        st.success(f"PDF '{pdf_name}' stored in Pinecone successfully!")
+        )])
 
 def get_stored_pdfs():
-    """Retrieves a list of stored PDFs from Pinecone."""
-    index_stats = index.describe_index_stats()
-    namespaces = index_stats.get("namespaces", {})
-    stored_pdfs = list(namespaces.keys())  # List all stored PDF namespaces
-    return stored_pdfs
+    """Fetches all stored PDF names from Pinecone."""
+    try:
+        results = index.describe_index_stats()
+        if 'namespaces' in results and '' in results['namespaces']:
+            return list(set([metadata['pdf_name'] for metadata in index.fetch(results['namespaces']['']['vector_count'])['vectors'].values()]))
+        return []
+    except Exception as e:
+        return []
+
+def query_pinecone(query_vector, selected_pdf):
+    """Handles Pinecone query inside an asyncio event loop to prevent conflicts."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    return loop.run_until_complete(index.query(
+        vector=query_vector,
+        top_k=5, 
+        include_metadata=True, 
+        filter={"pdf_name": {"$eq": selected_pdf}}
+    ))
 
 def query_vectors(query, selected_pdf):
     """Queries Pinecone for the most relevant result."""
     query_vector = model.encode(query).tolist()
-    namespace = selected_pdf.replace(" ", "_").lower()
-
-    results = index.query(
-        vector=query_vector,
-        top_k=5, 
-        include_metadata=True, 
-        namespace=namespace
-    )
+    
+    article_match = re.search(r'Article (\d+|[A-Za-z]+)', query, re.IGNORECASE)
+    if article_match:
+        article_number = article_match.group(1)
+        results = query_pinecone(query_vector, selected_pdf)
+        if results and results["matches"]:
+            return results["matches"][0]["metadata"]["text"]
+    
+    results = query_pinecone(query_vector, selected_pdf)
     
     if results and results["matches"]:
         return "\n\n".join([match["metadata"]["text"] for match in results["matches"]])
@@ -114,12 +127,11 @@ def translate_text(text, target_lang):
     return GoogleTranslator(source="auto", target=target_lang).translate(text)
 
 # Streamlit UI
-st.title("📜 AI-Powered Legal HelpDesk")
-
-# Sidebar: List stored PDFs
-st.sidebar.header("📂 Stored PDFs")
+st.sidebar.title("📂 Stored PDFs")
 stored_pdfs = get_stored_pdfs()
-selected_pdf = None
+selected_pdf = st.sidebar.selectbox("Select a PDF", stored_pdfs if stored_pdfs else ["No PDFs Found"])
+
+st.title("📜 AI-Powered Legal HelpDesk")
 
 # PDF Source Selection
 pdf_source = st.radio("Select PDF Source", ["Upload from PC", "Choose from Document Storage"], index=1)
@@ -127,19 +139,13 @@ pdf_source = st.radio("Select PDF Source", ["Upload from PC", "Choose from Docum
 if pdf_source == "Upload from PC":
     uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
     if uploaded_file is not None:
-        temp_pdf_path = os.path.join("/tmp", uploaded_file.name)
+        temp_pdf_path = os.path.join("/tmp", f"{uploaded_file.name}")
         with open(temp_pdf_path, "wb") as f:
             f.write(uploaded_file.read())
         
         chapters, articles = extract_text_from_pdf(temp_pdf_path)
         store_vectors(chapters, articles, uploaded_file.name)
-        st.rerun()  # Refresh page to update the sidebar
-
-else:
-    if stored_pdfs:
-        selected_pdf = st.sidebar.radio("Select a PDF", stored_pdfs)
-    else:
-        st.sidebar.warning("No PDFs found in storage.")
+        st.success(f"PDF '{uploaded_file.name}' uploaded and processed successfully!")
 
 # Language Selection
 input_lang = st.radio("Choose Input Language", ["English", "Arabic"], index=0)
