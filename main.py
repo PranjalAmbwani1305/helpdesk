@@ -1,65 +1,68 @@
-import os
-import uuid
 import streamlit as st
 import pinecone
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from PyPDF2 import PdfReader
 import pytesseract
 from pdf2image import convert_from_bytes
+from PyPDF2 import PdfReader
+from PIL import Image
+import json
+import os
 
-# Initialize Pinecone
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-INDEX_NAME = "helpdesk"
+# 🔹 Initialize Pinecone
+PINECONE_API_KEY = "your-pinecone-api-key"
+INDEX_NAME = "your-index-name"
 
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index = pc.Index(INDEX_NAME)
 
-# Load Hugging Face model for embeddings
-embed_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-
-st.set_page_config(page_title="AI-Powered Legal HelpDesk", layout="wide")
-
-# Sidebar UI for PDF Selection
-st.sidebar.header("📂 Stored PDFs")
-
-def get_stored_pdfs():
-    """Fetch unique PDF names stored in Pinecone."""
+# 🔹 Function to Extract Text from Scanned PDFs (OCR)
+def extract_text_with_ocr(pdf_file):
+    """
+    Extract text from a scanned (image-based) PDF using OCR.
+    :param pdf_file: Uploaded PDF file (BytesIO)
+    :return: Extracted text as a string
+    """
+    text = []
     try:
-        stats = index.describe_index_stats()
-        if "namespaces" in stats and "" in stats["namespaces"]:
-            vector_count = stats["namespaces"][""]["vector_count"]
-            if vector_count == 0:
-                return []
-            
-            # Fetch stored vectors
-            results = index.query(vector=[0] * 384, top_k=vector_count, include_metadata=True)
-
-            # Extract unique PDF names
-            pdf_names = list(set(
-                match["metadata"]["pdf_name"] for match in results["matches"] if "pdf_name" in match["metadata"]
-            ))
-
-            return pdf_names
-        return []
+        images = convert_from_bytes(pdf_file.read(), dpi=300)
+        for img in images:
+            img = img.convert("L")  # Convert to grayscale for better OCR
+            extracted_text = pytesseract.image_to_string(img, lang="eng")
+            text.append(extracted_text)
+        return "\n".join(text).strip()
     except Exception as e:
-        st.error(f"Error fetching PDFs: {e}")
-        return []
+        return None  # Return None if OCR fails
 
-stored_pdfs = get_stored_pdfs()
+# 🔹 Function to Store Data in Pinecone
+def store_in_pinecone(pdf_name, text_chunks):
+    """
+    Stores extracted text chunks in Pinecone with metadata.
+    :param pdf_name: Name of the uploaded PDF
+    :param text_chunks: List of dictionaries containing chunked text
+    """
+    vectors = []
+    for chunk_id, chunk in enumerate(text_chunks):
+        vector_id = f"{pdf_name}-article-{chunk_id}"
+        metadata = {
+            "pdf_name": pdf_name,
+            "article_id": f"article-{chunk_id}",
+            "text": chunk["text"],
+            "title": chunk.get("title", ""),
+            "chapter": chunk.get("chapter", ""),
+            "type": "article"
+        }
+        vectors.append((vector_id, [0.5] * 1536, metadata))  # Dummy vector embedding
 
-# Ensure selectbox is used only ONCE
-selected_pdf = None
-if stored_pdfs:
-    selected_pdf = st.sidebar.selectbox("Select a PDF", options=stored_pdfs, key="pdf_dropdown")
+    if vectors:
+        index.upsert(vectors)
+        st.success(f"✅ Successfully stored {len(vectors)} chunks in Pinecone.")
 
-# File Upload
+# 🔹 File Upload Section
 st.header("📜 AI-Powered Legal HelpDesk")
 st.subheader("Select PDF Source")
 
 uploaded_file = st.file_uploader("Upload a PDF", type="pdf")
 
-if uploaded_file is not None:
+if uploaded_file:
     pdf_name = uploaded_file.name
     pdf_text = None
 
@@ -75,48 +78,48 @@ if uploaded_file is not None:
         pdf_text = extract_text_with_ocr(uploaded_file)
 
     if not pdf_text:
-        st.error("❌ This document appears to be an image-based PDF and OCR could not extract text.")
+        st.error("❌ This document appears to be an image-based PDF, and OCR could not extract text.")
     else:
-        # Process and store
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-        chunks = text_splitter.split_text(pdf_text)
+        st.success(f"✅ Text successfully extracted from '{pdf_name}'.")
 
-        embeddings = embed_model.embed_documents(chunks)
+        # 🔹 Chunk the Text and Store in Pinecone
+        text_chunks = [{"text": chunk.strip()} for chunk in pdf_text.split("\n\n") if chunk.strip()]
+        store_in_pinecone(pdf_name, text_chunks)
 
-        for idx, (embedding, chunk) in enumerate(zip(embeddings, chunks)):
-            article_id = f"{pdf_name}-article-{idx+1}"  # Unique Article ID
-            index.upsert(vectors=[
-                (article_id, embedding, {
-                    "pdf_name": pdf_name,
-                    "article_id": article_id,
-                    "title": f"Article {idx+1}",
-                    "text": chunk,
-                    "type": "article"
-                })
-            ])
+# 🔹 Retrieve Stored PDFs from Pinecone
+stored_pdfs = [match["metadata"]["pdf_name"] for match in index.query([], top_k=100, include_metadata=True)["matches"]]
+stored_pdfs = list(set(stored_pdfs))  # Remove duplicates
 
-        st.success(f"✅ PDF '{pdf_name}' uploaded and processed successfully!")
+# 🔹 Sidebar: Select a Stored PDF
+if stored_pdfs:
+    selected_pdf = st.sidebar.selectbox("📂 Stored PDFs", options=stored_pdfs, key="pdf_dropdown")
 
-        # Refresh stored PDFs
-        stored_pdfs = get_stored_pdfs()
+    if st.sidebar.button("Retrieve Stored Data"):
+        query_results = index.query([], top_k=10, include_metadata=True, filter={"pdf_name": selected_pdf})["matches"]
+        
+        if query_results:
+            st.subheader(f"📖 Extracted Articles from '{selected_pdf}'")
+            for match in query_results:
+                st.markdown(f"**🔹 {match['metadata'].get('title', 'Unknown Title')}**")
+                st.markdown(f"📜 **Article ID:** {match['metadata'].get('article_id', 'Unknown')}")
+                st.markdown(f"**📖 Text:** {match['metadata'].get('text', '')}")
+                st.markdown("---")
+        else:
+            st.warning("No articles found for this PDF.")
 
-# Question Input
+# 🔹 Ask a Question
 st.subheader("Ask a legal question:")
-query = st.text_input("Type your question here...")
+question = st.text_input("Type your question here...")
 
-if query and selected_pdf:
-    query_embedding = embed_model.embed_query(query)
-    search_results = index.query(vector=query_embedding, top_k=5, include_metadata=True)
-
-    st.subheader("📖 Relevant Legal Sections:")
-    for match in search_results["matches"]:
-        pdf_name = match["metadata"].get("pdf_name", "Unknown")
-        article_id = match["metadata"].get("article_id", "Unknown")
-        title = match["metadata"].get("title", f"Article {article_id.split('-')[-1]}" if "article-" in article_id else "Unknown")
-        text = match["metadata"].get("text", "No text available")
-
-        # Display correct Article ID
-        st.write(f"🔹 **From PDF:** {pdf_name}")
-        st.write(f"📜 **{title}** (ID: `{article_id}`)")
-        st.write(text)
-        st.write("---")
+if question and stored_pdfs:
+    query_results = index.query([], top_k=5, include_metadata=True)
+    
+    if query_results:
+        st.subheader("📖 Relevant Legal Sections:")
+        for match in query_results["matches"]:
+            st.markdown(f"🔹 **From PDF:** {match['metadata']['pdf_name']}")
+            st.markdown(f"📜 **Article ID:** {match['metadata'].get('article_id', 'Unknown')}")
+            st.markdown(f"**{match['metadata'].get('text', '')}**")
+            st.markdown("---")
+    else:
+        st.warning("No relevant sections found.")
