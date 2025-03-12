@@ -13,10 +13,6 @@ from pinecone import Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
-# Check if index exists, otherwise create it
-if index_name not in pc.list_indexes():
-    pc.create_index(index_name, dimension=384, metric="cosine")
-
 index = pc.Index(index_name)
 
 # Load Hugging Face Model (Sentence Transformer)
