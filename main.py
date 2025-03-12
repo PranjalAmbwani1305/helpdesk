@@ -13,7 +13,7 @@ pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 index = pc.Index(index_name)
 
-# Load Hugging Face Model (Sentence Transformer)
+# Load Hugging Face Model
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
 # Regex patterns for Chapters & Articles
@@ -63,27 +63,33 @@ def store_vectors(chapters, articles, pdf_name):
     """Stores extracted chapters and articles in Pinecone."""
     namespace = pdf_name.replace(" ", "_").lower()  # Unique namespace for each PDF
 
+    batch = []
     for i, chapter in enumerate(chapters):
         chapter_vector = model.encode(chapter['content']).tolist()
-        index.upsert([(
+        batch.append((
             f"{pdf_name}-chapter-{i}", chapter_vector, 
             {"pdf_name": pdf_name, "text": chapter['content'], "type": "chapter"}
-        )], namespace=namespace)
+        ))
     
     for i, article in enumerate(articles):
         article_number_match = re.search(r'Article (\d+|[A-Za-z]+)', article['title'], re.IGNORECASE)
         article_number = article_number_match.group(1) if article_number_match else str(i)
         article_vector = model.encode(article['content']).tolist()
-        index.upsert([(
+        batch.append((
             f"{pdf_name}-article-{article_number}", article_vector, 
             {"pdf_name": pdf_name, "chapter": article['chapter'], "text": article['content'], "type": "article", "title": article['title']}
-        )], namespace=namespace)
+        ))
+
+    # Insert batch into Pinecone
+    if batch:
+        index.upsert(batch, namespace=namespace)
+        st.success(f"PDF '{pdf_name}' stored in Pinecone successfully!")
 
 def get_stored_pdfs():
     """Retrieves a list of stored PDFs from Pinecone."""
     index_stats = index.describe_index_stats()
     namespaces = index_stats.get("namespaces", {})
-    stored_pdfs = list(namespaces.keys())
+    stored_pdfs = list(namespaces.keys())  # List all stored PDF namespaces
     return stored_pdfs
 
 def query_vectors(query, selected_pdf):
@@ -91,24 +97,10 @@ def query_vectors(query, selected_pdf):
     query_vector = model.encode(query).tolist()
     namespace = selected_pdf.replace(" ", "_").lower()
 
-    article_match = re.search(r'Article (\d+|[A-Za-z]+)', query, re.IGNORECASE)
-    if article_match:
-        article_number = article_match.group(1)
-        results = index.query(
-            vector=query_vector,
-            top_k=1, 
-            include_metadata=True, 
-            filter={"pdf_name": {"$eq": selected_pdf}, "type": {"$eq": "article"}, "title": {"$eq": f"Article {article_number}"}},
-            namespace=namespace
-        )
-        if results and results["matches"]:
-            return results["matches"][0]["metadata"]["text"]
-    
     results = index.query(
         vector=query_vector,
         top_k=5, 
         include_metadata=True, 
-        filter={"pdf_name": {"$eq": selected_pdf}},
         namespace=namespace
     )
     
@@ -141,8 +133,8 @@ if pdf_source == "Upload from PC":
         
         chapters, articles = extract_text_from_pdf(temp_pdf_path)
         store_vectors(chapters, articles, uploaded_file.name)
-        selected_pdf = uploaded_file.name
-        st.success(f"PDF '{uploaded_file.name}' uploaded and processed successfully!")
+        st.rerun()  # Refresh page to update the sidebar
+
 else:
     if stored_pdfs:
         selected_pdf = st.sidebar.radio("Select a PDF", stored_pdfs)
