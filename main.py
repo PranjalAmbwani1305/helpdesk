@@ -64,7 +64,7 @@ def process_and_store_pdf(uploaded_file):
 
         st.success(f"✅ PDF '{pdf_name}' uploaded and stored successfully!")
 
-# 📑 Function to get stored PDFs
+# 📑 Function to get stored PDFs (Updated Query)
 def get_stored_pdfs():
     try:
         index_stats = index.describe_index_stats()
@@ -72,17 +72,18 @@ def get_stored_pdfs():
 
         if "namespaces" in index_stats and index_stats["total_vector_count"] > 0:
             for namespace in index_stats["namespaces"]:
-                # 🔹 Query metadata instead of embeddings
-                query_results = index.query(
-                    namespace=namespace,
-                    queries=[[0.0] * 384],  # Ensure correct embedding size
-                    top_k=5,
-                    include_metadata=True
-                )
+                if index_stats["namespaces"][namespace]["vector_count"] > 0:
+                    query_vector = get_embedding("dummy query")  # Valid embedding
+                    query_results = index.query(
+                        namespace=namespace,
+                        queries=[query_vector],  
+                        top_k=5,
+                        include_metadata=True
+                    )
 
-                for match in query_results.get("matches", []):
-                    if "metadata" in match and "pdf_name" in match["metadata"]:
-                        pdf_names.add(match["metadata"]["pdf_name"])
+                    for match in query_results.get("matches", []):
+                        if "metadata" in match and "pdf_name" in match["metadata"]:
+                            pdf_names.add(match["metadata"]["pdf_name"])
 
         return list(pdf_names)
 
@@ -119,13 +120,20 @@ if st.button("🔎 Get Answer" if language == "English" else "🔎 احصل عل
         translated_query = translate_text(query, "en") if language == "Arabic" else query
         query_vector = get_embedding(translated_query)
 
-        # Query Pinecone
-        results = index.query(queries=[query_vector], top_k=5, include_metadata=True)
-        answer = results["matches"][0]["metadata"]["content"] if results["matches"] else "⚠️ No relevant information found." if language == "English" else "⚠️ لم يتم العثور على معلومات ذات صلة."
+        try:
+            # Query Pinecone
+            results = index.query(queries=[query_vector], top_k=5, include_metadata=True)
+            if results["matches"]:
+                answer = results["matches"][0]["metadata"].get("content", "⚠️ No relevant information found.")
+            else:
+                answer = "⚠️ No relevant information found."
 
-        translated_answer = translate_text(answer, "ar") if language == "Arabic" else answer
+            translated_answer = translate_text(answer, "ar") if language == "Arabic" else answer
 
-        st.markdown("### ✅ AI Answer:" if language == "English" else "### ✅ إجابة الذكاء الاصطناعي:")
-        st.info(translated_answer)
+            st.markdown("### ✅ AI Answer:" if language == "English" else "### ✅ إجابة الذكاء الاصطناعي:")
+            st.info(translated_answer)
+
+        except Exception as e:
+            st.error(f"❌ Error fetching results: {str(e)}")
     else:
-        st.error("⚠️ Please select a PDF before asking a question." if language == "English" else "⚠️ يرجى تحديد ملف PDF قبل طرح سؤال.")
+        st.error("⚠️ Please select a PDF before asking a question." if language == "English" else "⚠️ يرجى تحديد ملف PDF قبل طرح سؤال.")                     
