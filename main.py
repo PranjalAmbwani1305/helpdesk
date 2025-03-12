@@ -105,4 +105,27 @@ st.markdown(f"<h1 style='text-align: center;'>📜 AI-Powered Legal HelpDesk ({'
 st.subheader("📑 Select PDF Source" if language == "English" else "📑 اختر مصدر ملف PDF")
 upload_option = st.radio("Choose an option:" if language == "English" else "اختر خيارًا:", ["Upload from PC" if language == "English" else "تحميل من الكمبيوتر", "Choose from Document Storage" if language == "English" else "اختر من التخزين"])
 
-if uplo
+if upload_option == "Upload from PC" or upload_option == "تحميل من الكمبيوتر":
+    uploaded_file = st.file_uploader("📂 Upload a PDF" if language == "English" else "📂 تحميل ملف PDF", type=["pdf"], key="pdf_uploader")
+    if uploaded_file:
+        process_and_store_pdf(uploaded_file)
+
+# 🔍 Query Section
+st.subheader("🤖 Ask a Legal Question" if language == "English" else "🤖 اسأل سؤال قانوني")
+query = st.text_area("✍️ Type your question here:" if language == "English" else "✍️ اكتب سؤالك هنا:")
+
+if st.button("🔎 Get Answer" if language == "English" else "🔎 احصل على الإجابة"):
+    if selected_pdf and selected_pdf != "No PDFs Found":
+        translated_query = translate_text(query, "en") if language == "Arabic" else query
+        query_vector = get_embedding(translated_query)
+
+        # Query Pinecone
+        results = index.query(queries=[query_vector], top_k=5, include_metadata=True)
+        answer = results["matches"][0]["metadata"]["content"] if results["matches"] else "⚠️ No relevant information found." if language == "English" else "⚠️ لم يتم العثور على معلومات ذات صلة."
+
+        translated_answer = translate_text(answer, "ar") if language == "Arabic" else answer
+
+        st.markdown("### ✅ AI Answer:" if language == "English" else "### ✅ إجابة الذكاء الاصطناعي:")
+        st.info(translated_answer)
+    else:
+        st.error("⚠️ Please select a PDF before asking a question." if language == "English" else "⚠️ يرجى تحديد ملف PDF قبل طرح سؤال.")
