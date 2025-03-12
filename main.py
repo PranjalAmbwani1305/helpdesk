@@ -2,11 +2,14 @@ import os
 import uuid
 import streamlit as st
 import pinecone
+import pytesseract
 from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from PyPDF2 import PdfReader
+from pdf2image import convert_from_path
+from PIL import Image
 
-# 🔹 Initialize Pinecone
+# 🔹 Set up Pinecone
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 INDEX_NAME = "helpdesk"
 
@@ -16,12 +19,19 @@ index = pc.Index(INDEX_NAME)
 # 🔹 Load embedding model
 embed_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
-# 🔹 Function to extract text from PDF
+# 🔹 Function to extract text from a text-based PDF
 def extract_text_from_pdf(pdf_file):
-    """Extracts text from a given PDF file."""
+    """Extracts text from a text-based PDF."""
     reader = PdfReader(pdf_file)
     text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
     return text
+
+# 🔹 Function to extract text from a scanned PDF using OCR
+def extract_text_from_scanned_pdf(pdf_file):
+    """Converts PDF pages to images and extracts text using OCR."""
+    images = convert_from_path(pdf_file)
+    ocr_text = "\n".join([pytesseract.image_to_string(img) for img in images])
+    return ocr_text
 
 # 🔹 Function to store vectors in Pinecone
 def store_vectors(embeddings, text_chunks, pdf_name):
@@ -42,46 +52,14 @@ def store_vectors(embeddings, text_chunks, pdf_name):
 
     if upsert_data:
         try:
-            # 🔹 Store vectors in Pinecone
             index.upsert(vectors=upsert_data)
-
-            # 🔹 Debug: Fetch back stored data to verify
-            stored_data = index.query(vector=upsert_data[0][1], top_k=1, include_metadata=True)
-            print("🔍 Sample stored metadata:", stored_data["matches"][0]["metadata"])
+            print(f"✅ Successfully stored {len(upsert_data)} chunks from {pdf_name}")
         except Exception as e:
             print(f"❌ Error storing vectors: {e}")
 
 # 🔹 Streamlit UI
-st.set_page_config(page_title="AI-Powered Legal HelpDesk", layout="wide")
-
 st.header("📜 AI-Powered Legal HelpDesk")
-st.subheader("Upload PDFs and Ask Questions")
 
-# Sidebar: Display available PDFs
-def get_stored_pdfs():
-    """Fetch unique PDF names stored in Pinecone."""
-    try:
-        stats = index.describe_index_stats()
-        if "namespaces" in stats and "" in stats["namespaces"]:
-            vector_count = stats["namespaces"][""]["vector_count"]
-            if vector_count == 0:
-                return []
-            
-            # Fetch stored vectors
-            results = index.query(vector=[0] * 384, top_k=vector_count, include_metadata=True)
-
-            # Extract unique PDF names
-            pdf_names = list(set(
-                match["metadata"]["pdf_name"] for match in results["matches"] if "pdf_name" in match["metadata"]
-            ))
-
-            return pdf_names
-        return []
-    except Exception as e:
-        print(f"❌ Error fetching PDFs: {e}")
-        return []
-
-# Upload & Process Multiple PDFs
 uploaded_files = st.file_uploader("Upload PDFs", type="pdf", accept_multiple_files=True)
 
 if uploaded_files:
@@ -90,47 +68,18 @@ if uploaded_files:
         pdf_text = extract_text_from_pdf(uploaded_file)
 
         if not pdf_text.strip():
-            st.error(f"❌ Could not extract text from {pdf_name}. It may be a scanned document.")
+            st.warning(f"⚠️ No text found in {pdf_name}. Running OCR...")
+            pdf_text = extract_text_from_scanned_pdf(uploaded_file)
+
+        if not pdf_text.strip():
+            st.error(f"❌ Could not extract text from {pdf_name}. It may be an image-based PDF.")
             continue
 
-        # Split text into chunks
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
         text_chunks = text_splitter.split_text(pdf_text)
 
-        if not text_chunks:
-            st.error(f"❌ No valid text chunks extracted from {pdf_name}.")
-            continue
-
-        # Generate embeddings
         embeddings = embed_model.embed_documents(text_chunks)
 
-        if not embeddings:
-            st.error(f"❌ Embeddings could not be generated for {pdf_name}.")
-            continue
-
-        # Store in Pinecone
         store_vectors(embeddings, text_chunks, pdf_name)
 
         st.success(f"✅ PDF '{pdf_name}' uploaded and processed successfully!")
-
-# Refresh sidebar PDFs
-stored_pdfs = get_stored_pdfs()
-selected_pdf = st.sidebar.selectbox("Select a PDF", options=stored_pdfs if stored_pdfs else ["No PDFs Found"])
-
-# Question Input
-st.subheader("Ask a legal question:")
-query = st.text_input("Type your question here...")
-
-if query and selected_pdf != "No PDFs Found":
-    # Search in Pinecone
-    query_embedding = embed_model.embed_query(query)
-    search_results = index.query(vector=query_embedding, top_k=5, include_metadata=True)
-
-    st.subheader("📖 Relevant Legal Sections:")
-    for match in search_results["matches"]:
-        metadata = match.get("metadata", {})
-
-        st.write(f"🔹 **From PDF:** {metadata.get('pdf_name', 'Unknown PDF')}")
-        st.write(f"📜 **Article ID:** {metadata.get('article_id', 'Unknown')}")
-        st.write(metadata.get("text", "No text available"))
-        st.write("---")
