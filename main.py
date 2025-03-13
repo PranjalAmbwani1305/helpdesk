@@ -1,72 +1,136 @@
 import streamlit as st
-import os
 import pinecone
-import fitz  # PyMuPDF for PDF processing
+import PyPDF2
+import os
+import re
+from deep_translator import GoogleTranslator
 from sentence_transformers import SentenceTransformer
 
-# Load Pinecone API Key from Environment Variables
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-INDEX_NAME = "helpdesk"
-
 # Initialize Pinecone
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
+index_name = "helpdesk"
+index = pc.Index(index_name)
 
-# Check if index exists, else create it
-if INDEX_NAME not in [i.name for i in pc.list_indexes()]:
-    pc.create_index(INDEX_NAME, dimension=768, metric="cosine")
+# Load Hugging Face Model
+model = SentenceTransformer("all-MiniLM-L6-v2")
 
-index = pc.Index(INDEX_NAME)
+# Regex patterns for Chapters & Articles
+chapter_pattern = r'^(Chapter (\d+|[A-Za-z]+)):.*$'
+article_pattern = r'^(Article (\d+|[A-Za-z]+)):.*$'
 
-# Load Embedding Model
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
+def extract_text_from_pdf(pdf_path):
+    """Extracts and structures text from the PDF."""
+    with open(pdf_path, "rb") as file:
+        reader = PyPDF2.PdfReader(file)
+        text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+    
+    chapters, articles = [], []
+    current_chapter, current_chapter_content = "Uncategorized", []
+    current_article, current_article_content = None, []
+    paragraphs = text.split('\n')
+    
+    for para in paragraphs:
+        para = para.strip()
+        
+        if re.match(chapter_pattern, para):
+            if current_chapter != "Uncategorized":
+                chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
+            current_chapter = para
+            current_chapter_content = []
+        
+        article_match = re.match(article_pattern, para)
+        if article_match:
+            if current_article:
+                articles.append({'chapter': current_chapter, 'title': current_article, 'content': ' '.join(current_article_content)})
+            current_article = article_match.group(1)
+            current_article_content = []
+        else:
+            if current_article:
+                current_article_content.append(para)
+            else:
+                current_chapter_content.append(para)
+
+    if current_article:
+        articles.append({'chapter': current_chapter, 'title': current_article, 'content': ' '.join(current_article_content)})
+    if current_chapter and current_chapter != "Uncategorized":
+        chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
+    
+    return chapters, articles
+
+def store_vectors(chapters, articles, pdf_name):
+    """Stores extracted chapters and articles in Pinecone."""
+    for i, chapter in enumerate(chapters):
+        chapter_vector = model.encode(chapter['content']).tolist()
+        index.upsert([(
+            f"{pdf_name}-chapter-{i}", chapter_vector, 
+            {"pdf_name": pdf_name, "text": chapter['content'], "type": "chapter"}
+        )])
+    
+    for i, article in enumerate(articles):
+        # Debugging: Print extracted article content
+        st.write(f"Storing Article {article['title']}: {article['content'][:200]}...")  # Show first 200 characters for verification
+        
+        article_vector = model.encode(article['content']).tolist()
+        index.upsert([(
+            f"{pdf_name}-article-{i}", article_vector, 
+            {"pdf_name": pdf_name, "chapter": article['chapter'], "text": article['content'], "type": "article"}
+        )])
+
+def query_vectors(query, selected_pdf):
+    """Queries Pinecone for the most relevant result, prioritizing exact article matches."""
+    if "article 1" in query.lower() or "article one" in query.lower():
+        results = index.query(vector=None, top_k=1, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}, "type": {"$eq": "article"}, "title": {"$eq": "Article 1"}})
+        if results and results["matches"]:
+            return results["matches"][0]["metadata"]["text"]
+    
+    query_vector = model.encode(query).tolist()
+    results = index.query(vector=query_vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
+    
+    if results and results["matches"]:
+        return "\n\n".join([match["metadata"]["text"] for match in results["matches"]])
+    return "No relevant answer found."
+
+def translate_text(text, target_lang):
+    """Translates text using GoogleTranslator."""
+    return GoogleTranslator(source="auto", target=target_lang).translate(text)
 
 # Streamlit UI
-st.title("📖 AI-Powered Legal HelpDesk")
-st.subheader("Upload PDFs & Search Legal Documents")
+st.title("AI-Powered Legal HelpDesk")
 
-# PDF Upload
-uploaded_files = st.file_uploader("📂 Upload multiple PDFs", type="pdf", accept_multiple_files=True)
+# PDF Source Selection
+pdf_source = st.radio("Select PDF Source", ["Upload from PC", "Choose from Document Storage"], index=1)
+selected_pdf = None
 
-# Function to extract text from PDFs
-def extract_text_from_pdf(pdf_file):
-    doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
-    text = ""
-    for page in doc:
-        text += page.get_text("text") + "\n"
-    return text
-
-# Function to split text into smaller chunks
-def split_text(text, chunk_size=500):
-    words = text.split()
-    return [" ".join(words[i:i + chunk_size]) for i in range(0, len(words), chunk_size)]
-
-# Process PDFs
-if uploaded_files:
-    for pdf in uploaded_files:
-        st.success(f"Processing: {pdf.name}")
-        pdf_text = extract_text_from_pdf(pdf)
-        text_chunks = split_text(pdf_text)
+if pdf_source == "Upload from PC":
+    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
+    if uploaded_file is not None:
+        temp_pdf_path = os.path.join("/tmp", uploaded_file.name)
+        with open(temp_pdf_path, "wb") as f:
+            f.write(uploaded_file.read())
         
-        # Generate embeddings and store in Pinecone
-        for i, chunk in enumerate(text_chunks):
-            vector = embedder.encode(chunk).tolist()
-            doc_id = f"{pdf.name}-chunk-{i}"
-            index.upsert([(doc_id, vector, {"pdf_name": pdf.name, "text": chunk})])
+        chapters, articles = extract_text_from_pdf(temp_pdf_path)
+        store_vectors(chapters, articles, uploaded_file.name)
+        selected_pdf = uploaded_file.name
+        st.success("PDF uploaded and processed successfully!")
+else:
+    stored_pdfs = ["Basic Law Governance.pdf", "Law of the Consultative Council.pdf", "Law of the Council of Ministers.pdf"]
+    selected_pdf = st.selectbox("Select a PDF", stored_pdfs)
 
-    st.success("📂 PDFs uploaded and processed successfully!")
+# Language Selection
+input_lang = st.radio("Choose Input Language", ["English", "Arabic"], index=0)
+response_lang = st.radio("Choose Response Language", ["English", "Arabic"], index=0)
 
-# Query Section
-query = st.text_input("🔍 Enter your legal query:")
-if query:
-    query_vector = embedder.encode(query).tolist()
-    results = index.query(vector=query_vector, top_k=5, include_metadata=True)
+# Query Input
+query = st.text_input("Ask a legal question:")
 
-    if results.get("matches"):
-        st.subheader("📜 Search Results")
-        for match in results["matches"]:
-            st.markdown(f"**📄 PDF:** {match['metadata']['pdf_name']}")
-            st.write(f"🔹 {match['metadata']['text']}")
-            st.write(f"📝 **Score:** {match['score']:.4f}")
-            st.write("---")
+if st.button("Get Answer"):
+    if selected_pdf and query:
+        response = query_vectors(query, selected_pdf)
+        if response_lang == "Arabic":
+            response = translate_text(response, "ar")
+            st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
+        else:
+            st.write(f"**Answer:** {response}")
     else:
-        st.warning("No relevant results found.")
+        st.warning("Please upload a PDF and enter a query.")
