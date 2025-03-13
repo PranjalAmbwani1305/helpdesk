@@ -25,38 +25,13 @@ except Exception as e:
     st.error(f"⚠️ Pinecone connection failed: {e}")
     st.stop()
 
-# Sidebar for PDF Selection
+# Sidebar: Only "Select PDF Source"
 st.sidebar.header("📂 Select PDF Source")
-pdf_source = st.sidebar.radio("Upload from:", ["PC", "Document Storage"])
 
-uploaded_file = None
-if pdf_source == "PC":
-    uploaded_file = st.sidebar.file_uploader("Upload a PDF", type=["pdf"])
-elif pdf_source == "Document Storage":
-    stored_pdfs = ["doc1.pdf", "doc2.pdf"]  # Example
-    selected_pdf = st.sidebar.selectbox("Choose a stored PDF", stored_pdfs)
-    uploaded_file = selected_pdf if selected_pdf else None
-
-# Sidebar for Language Selection
-st.sidebar.header("🌍 Choose Language")
-input_language = st.sidebar.radio("Choose Input Language:", ["English", "Arabic"])
-response_language = st.sidebar.radio("Choose Response Language:", ["English", "Arabic"])
-
-# Function to extract text from PDF
-def extract_text_from_pdf(pdf_path):
-    doc = fitz.open(pdf_path)
-    text = ""
-    for page in doc:
-        text += page.get_text("text") + "\n"
-    return text
-
-# Function to chunk text
-def chunk_text(text):
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-    return text_splitter.split_text(text)
-
-# Main section
+# PDF Upload Section
 st.title("📄 PDF Helpdesk")
+
+uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
 
 if uploaded_file:
     st.sidebar.success(f"📌 PDF Loaded: {uploaded_file.name}")
@@ -68,7 +43,14 @@ if uploaded_file:
 
     st.write(f"✅ File saved as: {temp_pdf_path}")
 
-    # Extract text
+    # Extract text from PDF
+    def extract_text_from_pdf(pdf_path):
+        doc = fitz.open(pdf_path)
+        text = ""
+        for page in doc:
+            text += page.get_text("text") + "\n"
+        return text
+
     extracted_text = extract_text_from_pdf(temp_pdf_path)
     if extracted_text:
         st.write("📜 Extracted text successfully!")
@@ -76,7 +58,11 @@ if uploaded_file:
         st.error("⚠️ No text extracted from PDF.")
         st.stop()
 
-    # Chunking
+    # Chunking text
+    def chunk_text(text):
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+        return text_splitter.split_text(text)
+
     chunks = chunk_text(extracted_text)
     st.write(f"🔍 {len(chunks)} chunks extracted!")
 
@@ -95,12 +81,3 @@ if uploaded_file:
         st.success("✅ PDF stored in Pinecone successfully!")
     except Exception as e:
         st.error(f"⚠️ Error storing in Pinecone: {e}")
-
-# Ask a Question
-st.subheader("❓ Ask a Question")
-query = st.text_input("Ask a question (in English or Arabic):")
-
-if query:
-    st.write("🔍 Searching for relevant information...")
-    # Placeholder for LLM or retrieval system
-    st.success("🤖 Answer: This is a placeholder response.")
