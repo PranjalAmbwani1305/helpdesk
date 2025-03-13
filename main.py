@@ -2,6 +2,7 @@ import streamlit as st
 import pinecone
 import PyPDF2
 import os
+import re
 from sentence_transformers import SentenceTransformer
 
 # --- CONFIGURATION ---
@@ -9,7 +10,7 @@ st.set_page_config(page_title="Legal HelpDesk", layout="wide")
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 INDEX_NAME = "helpdesk"
 
-# --- INITIALIZE PINECONE ---
+
 
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 
@@ -19,8 +20,8 @@ index = pc.Index(INDEX_NAME)
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
 # --- UI ELEMENTS ---
-st.sidebar.header("📄 Upload Legal Document")
-uploaded_file = st.sidebar.file_uploader("Upload a PDF", type=["pdf"])
+st.sidebar.header("📄 Upload Legal Documents")
+uploaded_files = st.sidebar.file_uploader("Upload PDFs", type=["pdf"], accept_multiple_files=True)
 st.sidebar.markdown("---")
 
 st.sidebar.header("🔍 Query HelpDesk")
@@ -32,51 +33,58 @@ st.title("📚 AI-Powered Legal HelpDesk")
 log_area = st.empty()
 
 # --- FUNCTIONS ---
-def clear_old_vectors():
-    """Deletes all vectors from Pinecone before inserting new ones."""
-    try:
-        index.delete(delete_all=True)
-        log_area.text("✅ Old vectors cleared from Pinecone.")
-    except pinecone.openapi_support.exceptions.NotFoundException:
-        log_area.text("⚠️ Index is empty or not found.")
-    except Exception as e:
-        st.error(f"Error while deleting vectors: {e}")
-
-def extract_text_from_pdf(pdf_file):
-    """Extracts text from uploaded PDF."""
+def extract_articles_from_pdf(pdf_file, pdf_name):
+    """Extracts articles from a PDF and stores them with the PDF name."""
     text = ""
     reader = PyPDF2.PdfReader(pdf_file)
     for page in reader.pages:
         text += page.extract_text() + "\n"
-    return text.strip()
+    
+    # Split text by legal article numbering (customize regex for your document structure)
+    articles = re.split(r"(Article \d+:)", text)
+    
+    # Combine article numbers with their content
+    structured_articles = []
+    for i in range(1, len(articles), 2):
+        article_title = articles[i].strip()
+        article_content = articles[i + 1].strip() if i + 1 < len(articles) else ""
+        structured_articles.append((pdf_name, article_title, article_content))
 
-def store_vectors(pdf_name, text):
-    """Encodes and stores the latest PDF in Pinecone."""
-    clear_old_vectors()
-    vector = model.encode(text).tolist()
-    index.upsert([(f"{pdf_name}-content", vector, {"pdf_name": pdf_name, "text": text})])
-    log_area.text(f"✅ Stored '{pdf_name}' successfully in Pinecone.")
+    return structured_articles
 
-def query_helpdesk(user_query):
-    """Retrieves the most relevant legal information."""
-    query_vector = model.encode(user_query).tolist()
-    results = index.query(queries=[query_vector], top_k=3, include_metadata=True)
-    return results['matches'] if results else []
+def store_vectors(pdf_articles):
+    """Stores extracted articles as separate vectors in Pinecone."""
+    vectors = []
+    for pdf_name, article_title, article_content in pdf_articles:
+        content_to_store = f"{article_title}\n{article_content}"
+        embedding = model.encode(content_to_store).tolist()
+        vector_id = f"{pdf_name}_{article_title.replace(' ', '_')}"
+        vectors.append((vector_id, embedding, {"pdf": pdf_name, "title": article_title, "content": article_content}))
+    
+    if vectors:
+        index.upsert(vectors)
+        log_area.text(f"✅ {len(vectors)} articles stored successfully in Pinecone.")
 
-# --- UPLOAD HANDLING ---
-if uploaded_file:
-    with st.spinner("🔄 Processing PDF..."):
-        pdf_text = extract_text_from_pdf(uploaded_file)
-        store_vectors(uploaded_file.name, pdf_text)
-        st.success(f"📂 '{uploaded_file.name}' stored in Pinecone.")
+# --- PDF PROCESSING ---
+if uploaded_files:
+    all_articles = []
+    for pdf_file in uploaded_files:
+        pdf_name = pdf_file.name
+        articles = extract_articles_from_pdf(pdf_file, pdf_name)
+        all_articles.extend(articles)
+    
+    if all_articles:
+        store_vectors(all_articles)
 
-# --- QUERY HANDLING ---
+# --- SEARCH FUNCTIONALITY ---
 if query_button and query:
-    with st.spinner("🔎 Searching legal database..."):
-        results = query_helpdesk(query)
-        if results:
-            for match in results:
-                st.markdown(f"**📜 Relevant Info:** {match['metadata']['text'][:500]}...")
-        else:
-            st.warning("⚠️ No relevant legal information found.")
+    query_embedding = model.encode(query).tolist()
+    results = index.query(query_embedding, top_k=5, include_metadata=True)
 
+    st.subheader("🔍 Search Results")
+    for match in results["matches"]:
+        metadata = match["metadata"]
+        st.write(f"📄 **PDF:** {metadata['pdf']}")
+        st.write(f"📌 **Article:** {metadata['title']}")
+        st.write(f"📝 **Content:** {metadata['content'][:300]}...")  # Show preview
+        st.markdown("---")
