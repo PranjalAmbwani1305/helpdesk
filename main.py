@@ -1,28 +1,29 @@
 import streamlit as st
-import pinecone
-import fitz  # PyMuPDF
 import os
+import fitz  # PyMuPDF for PDF processing
 from dotenv import load_dotenv
+from pinecone import Pinecone
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import Pinecone
+from langchain.vectorstores import Pinecone as PineconeVectorDB
 
 # Load environment variables
 load_dotenv()
 
-# Pinecone setup
+# Pinecone API setup
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
-INDEX_NAME = os.getenv("PINECONE_INDEX")
+INDEX_NAME = "helpdesk"  # Change this if needed
 
 # Initialize Pinecone
 st.write("🔗 Connecting to Pinecone...")
 try:
-    pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
-    index = pinecone.Index(INDEX_NAME)
-    st.write("✅ Pinecone connected successfully!")
+    pc = Pinecone(api_key=PINECONE_API_KEY)
+    index = pc.Index(INDEX_NAME)
+    st.success("✅ Pinecone connected successfully!")
 except Exception as e:
     st.error(f"⚠️ Pinecone connection failed: {e}")
+    st.stop()
 
 # Function to extract text from PDF
 def extract_text_from_pdf(pdf_path):
@@ -57,6 +58,7 @@ if uploaded_file:
         st.write("📜 Extracted text successfully!")
     else:
         st.error("⚠️ No text extracted from PDF.")
+        st.stop()
 
     # Chunking
     chunks = chunk_text(extracted_text)
@@ -69,6 +71,11 @@ if uploaded_file:
     # Initialize embeddings
     st.write("🔢 Generating embeddings...")
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    vector_db = Pinecone.from_texts(texts=chunks, embedding=embeddings, index_name=INDEX_NAME)
 
-    st.success("✅ PDF stored in Pinecone successfully!")
+    # Store in Pinecone
+    st.write("🚀 Storing embeddings in Pinecone...")
+    try:
+        vector_db = PineconeVectorDB.from_texts(texts=chunks, embedding=embeddings, index_name=INDEX_NAME)
+        st.success("✅ PDF stored in Pinecone successfully!")
+    except Exception as e:
+        st.error(f"⚠️ Error storing in Pinecone: {e}")
