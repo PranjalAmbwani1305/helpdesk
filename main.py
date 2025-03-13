@@ -25,6 +25,23 @@ except Exception as e:
     st.error(f"⚠️ Pinecone connection failed: {e}")
     st.stop()
 
+# Sidebar for PDF Selection
+st.sidebar.header("📂 Select PDF Source")
+pdf_source = st.sidebar.radio("Upload from:", ["PC", "Document Storage"])
+
+uploaded_file = None
+if pdf_source == "PC":
+    uploaded_file = st.sidebar.file_uploader("Upload a PDF", type=["pdf"])
+elif pdf_source == "Document Storage":
+    stored_pdfs = ["doc1.pdf", "doc2.pdf"]  # Example
+    selected_pdf = st.sidebar.selectbox("Choose a stored PDF", stored_pdfs)
+    uploaded_file = selected_pdf if selected_pdf else None
+
+# Sidebar for Language Selection
+st.sidebar.header("🌍 Choose Language")
+input_language = st.sidebar.radio("Choose Input Language:", ["English", "Arabic"])
+response_language = st.sidebar.radio("Choose Response Language:", ["English", "Arabic"])
+
 # Function to extract text from PDF
 def extract_text_from_pdf(pdf_path):
     doc = fitz.open(pdf_path)
@@ -38,12 +55,11 @@ def chunk_text(text):
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
     return text_splitter.split_text(text)
 
-# Streamlit UI
-st.title("📄 PDF to Pinecone Uploader")
+# Main section
+st.title("📄 PDF Helpdesk")
 
-uploaded_file = st.file_uploader("Upload your PDF", type=["pdf"])
 if uploaded_file:
-    st.success(f"📂 Uploaded file: {uploaded_file.name}")
+    st.sidebar.success(f"📌 PDF Loaded: {uploaded_file.name}")
 
     # Save PDF temporarily
     temp_pdf_path = f"temp_{uploaded_file.name}"
@@ -79,3 +95,12 @@ if uploaded_file:
         st.success("✅ PDF stored in Pinecone successfully!")
     except Exception as e:
         st.error(f"⚠️ Error storing in Pinecone: {e}")
+
+# Ask a Question
+st.subheader("❓ Ask a Question")
+query = st.text_input("Ask a question (in English or Arabic):")
+
+if query:
+    st.write("🔍 Searching for relevant information...")
+    # Placeholder for LLM or retrieval system
+    st.success("🤖 Answer: This is a placeholder response.")
