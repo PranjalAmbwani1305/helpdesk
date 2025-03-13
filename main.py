@@ -15,7 +15,7 @@ hf_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 # Pinecone Connection
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
-
+from pinecone import Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 index = pc.Index(index_name)
