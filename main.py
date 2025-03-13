@@ -11,7 +11,7 @@ PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
-index = pc.Index(index_name)
+
 
 # Load Sentence-Transformer model
 model = SentenceTransformer('all-MiniLM-L6-v2')
@@ -50,7 +50,7 @@ def store_vectors_batch(pdf_articles):
                     {
                         "pdf_name": pdf_name,
                         "title": article["title"],
-                        "chapter": article["chapter"],
+                        "chapter": article.get("chapter", "Unknown Chapter"),  # ✅ FIXED
                         "text": article["text"],
                         "type": "article"
                     }
