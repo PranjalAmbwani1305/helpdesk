@@ -10,6 +10,9 @@ from sentence_transformers import SentenceTransformer
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
+
+if index_name not in pc.list_indexes():
+    pc.create_index(index_name, dimension=384, metric="cosine")  # MiniLM embedding size
 index = pc.Index(index_name)
 
 # Load Hugging Face Model
@@ -20,7 +23,7 @@ chapter_pattern = r'^(Chapter (\d+|[A-Za-z]+)):.*$'
 article_pattern = r'^(Article (\d+|[A-Za-z]+)):.*$'
 
 def extract_text_from_pdf(pdf_path):
-    """Extracts and structures text from the PDF."""
+    """Extracts structured text (chapters & articles) from a PDF."""
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
         text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
@@ -58,40 +61,53 @@ def extract_text_from_pdf(pdf_path):
     
     return chapters, articles
 
-def store_vectors(chapters, articles, pdf_name):
-    """Stores extracted chapters and articles in Pinecone."""
+def store_vectors(pdf_name, chapters, articles):
+    """Stores extracted chapters and articles in Pinecone separately."""
+    
+    # Store chapters
     for i, chapter in enumerate(chapters):
         chapter_vector = model.encode(chapter['content']).tolist()
-        index.upsert([(
-            f"{pdf_name}-chapter-{i}", chapter_vector, 
-            {"pdf_name": pdf_name, "text": chapter['content'], "type": "chapter"}
-        )])
+        index.upsert([
+            (f"{pdf_name}-chapter-{i}", chapter_vector, {
+                "pdf_name": pdf_name,
+                "title": chapter['title'],
+                "text": chapter['content'],
+                "type": "chapter"
+            })
+        ])
     
+    # Store articles separately
     for i, article in enumerate(articles):
-        # Debugging: Print extracted article content
-        st.write(f"Storing Article {article['title']}: {article['content'][:200]}...")  # Show first 200 characters for verification
-        
         article_vector = model.encode(article['content']).tolist()
-        index.upsert([(
-            f"{pdf_name}-article-{i}", article_vector, 
-            {"pdf_name": pdf_name, "chapter": article['chapter'], "text": article['content'], "type": "article"}
-        )])
+        index.upsert([
+            (f"{pdf_name}-article-{i}", article_vector, {
+                "pdf_name": pdf_name,
+                "chapter": article['chapter'],
+                "title": article['title'],
+                "text": article['content'],
+                "type": "article"
+            })
+        ])
+        
+        # Debugging: Print stored article information
+        st.write(f"Stored Article {article['title']} (ID: {pdf_name}-article-{i})")
 
-def query_vectors(query, selected_pdf):
-    """Queries Pinecone for the most relevant result, prioritizing exact article matches."""
+def query_vectors(query, selected_pdfs):
+    """Queries Pinecone for the most relevant result from multiple PDFs."""
     query_vector = model.encode(query).tolist()
     
-    # Exact search for Article 1
-    if "article 1" in query.lower() or "article one" in query.lower():
-        results = index.query(vector=query_vector, top_k=1, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}, "type": {"$eq": "article"}, "title": {"$eq": "Article 1"}})
-        if results and results["matches"]:
-            return results["matches"][0]["metadata"]["text"]
-    
-    # Generic query for other articles or chapters
-    results = index.query(vector=query_vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
+    # Filter by selected PDFs
+    filter_query = {"pdf_name": {"$in": selected_pdfs}}
+
+    results = index.query(
+        vector=query_vector, 
+        top_k=5, 
+        include_metadata=True, 
+        filter=filter_query
+    )
     
     if results and results["matches"]:
-        return "\n\n".join([match["metadata"]["text"] for match in results["matches"]])
+        return "\n\n".join([f"**{match['metadata']['title']}**: {match['metadata']['text']}" for match in results["matches"]])
     return "No relevant answer found."
 
 def translate_text(text, target_lang):
@@ -103,22 +119,23 @@ st.title("AI-Powered Legal HelpDesk")
 
 # PDF Source Selection
 pdf_source = st.radio("Select PDF Source", ["Upload from PC", "Choose from Document Storage"], index=1)
-selected_pdf = None
 
 if pdf_source == "Upload from PC":
-    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
-    if uploaded_file is not None:
-        temp_pdf_path = os.path.join("/tmp", uploaded_file.name)
-        with open(temp_pdf_path, "wb") as f:
-            f.write(uploaded_file.read())
+    uploaded_files = st.file_uploader("Upload PDFs", type=["pdf"], accept_multiple_files=True)
+    if uploaded_files:
+        for uploaded_file in uploaded_files:
+            temp_pdf_path = os.path.join("/tmp", uploaded_file.name)
+            with open(temp_pdf_path, "wb") as f:
+                f.write(uploaded_file.read())
+            
+            chapters, articles = extract_text_from_pdf(temp_pdf_path)
+            store_vectors(uploaded_file.name, chapters, articles)
         
-        chapters, articles = extract_text_from_pdf(temp_pdf_path)
-        store_vectors(chapters, articles, uploaded_file.name)
-        selected_pdf = uploaded_file.name
-        st.success("PDF uploaded and processed successfully!")
-else:
-    stored_pdfs = ["Basic Law Governance.pdf", "Law of the Consultative Council.pdf", "Law of the Council of Ministers.pdf"]
-    selected_pdf = st.selectbox("Select a PDF", stored_pdfs)
+        st.success("PDFs uploaded and processed successfully!")
+
+# Allow users to query across multiple PDFs
+stored_pdfs = ["Basic Law Governance.pdf", "Law of the Consultative Council.pdf", "Law of the Council of Ministers.pdf"]
+selected_pdfs = st.multiselect("Select PDFs to Query", stored_pdfs, default=stored_pdfs)
 
 # Language Selection
 input_lang = st.radio("Choose Input Language", ["English", "Arabic"], index=0)
@@ -128,12 +145,12 @@ response_lang = st.radio("Choose Response Language", ["English", "Arabic"], inde
 query = st.text_input("Ask a legal question:")
 
 if st.button("Get Answer"):
-    if selected_pdf and query:
-        response = query_vectors(query, selected_pdf)
+    if selected_pdfs and query:
+        response = query_vectors(query, selected_pdfs)
         if response_lang == "Arabic":
             response = translate_text(response, "ar")
             st.markdown(f"<div dir='rtl' style='text-align: right;'>{response}</div>", unsafe_allow_html=True)
         else:
             st.write(f"**Answer:** {response}")
     else:
-        st.warning("Please upload a PDF and enter a query.")
+        st.warning("Please select PDFs and enter a query.")
