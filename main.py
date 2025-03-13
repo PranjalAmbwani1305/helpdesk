@@ -7,10 +7,10 @@ from deep_translator import GoogleTranslator
 from sentence_transformers import SentenceTransformer
 
 # Initialize Pinecone
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")  # Get your Pinecone API key from your environment
+pinecone.init(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
-index = pc.Index(index_name)
+index = pinecone.Index(index_name)
 
 # Load Hugging Face Model
 model = SentenceTransformer("all-MiniLM-L6-v2")
@@ -33,24 +33,28 @@ def extract_text_from_pdf(pdf_path):
     for para in paragraphs:
         para = para.strip()
         
+        # Capture chapter information
         if re.match(chapter_pattern, para):
             if current_chapter != "Uncategorized":
                 chapters.append({'title': current_chapter, 'content': ' '.join(current_chapter_content)})
             current_chapter = para
             current_chapter_content = []
         
+        # Capture article information
         article_match = re.match(article_pattern, para)
         if article_match:
             if current_article:
                 articles.append({'chapter': current_chapter, 'title': current_article, 'content': ' '.join(current_article_content)})
-            current_article = article_match.group(1)
+            current_article = article_match.group(1)  # Capture article title
             current_article_content = []
         else:
+            # Add paragraph content under the current article or chapter
             if current_article:
                 current_article_content.append(para)
             else:
                 current_chapter_content.append(para)
 
+    # Store any remaining content
     if current_article:
         articles.append({'chapter': current_chapter, 'title': current_article, 'content': ' '.join(current_article_content)})
     if current_chapter and current_chapter != "Uncategorized":
@@ -64,31 +68,27 @@ def store_vectors(chapters, articles, pdf_name):
         chapter_vector = model.encode(chapter['content']).tolist()
         index.upsert([(
             f"{pdf_name}-chapter-{i}", chapter_vector, 
-            {"pdf_name": pdf_name, "text": chapter['content'], "type": "chapter"}
+            {"pdf_name": pdf_name, "title": chapter['title'], "content": chapter['content'], "type": "chapter"}
         )])
     
     for i, article in enumerate(articles):
-        # Debugging: Print extracted article content
-        st.write(f"Storing Article {article['title']}: {article['content'][:200]}...")  # Show first 200 characters for verification
-        
         article_vector = model.encode(article['content']).tolist()
         index.upsert([(
             f"{pdf_name}-article-{i}", article_vector, 
-            {"pdf_name": pdf_name, "chapter": article['chapter'], "text": article['content'], "type": "article"}
+            {"pdf_name": pdf_name, "chapter": article['chapter'], "title": article['title'], "content": article['content'], "type": "article"}
         )])
 
 def query_vectors(query, selected_pdf):
     """Queries Pinecone for the most relevant result, prioritizing exact article matches."""
-    if "article 1" in query.lower() or "article one" in query.lower():
-        results = index.query(vector=None, top_k=1, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}, "type": {"$eq": "article"}, "title": {"$eq": "Article 1"}})
-        if results and results["matches"]:
-            return results["matches"][0]["metadata"]["text"]
-    
+    # Use model to encode the query and get vector representation
     query_vector = model.encode(query).tolist()
+    
+    # Perform query in Pinecone for the top 5 matches
     results = index.query(vector=query_vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
     
+    # If matches found, return the most relevant result
     if results and results["matches"]:
-        return "\n\n".join([match["metadata"]["text"] for match in results["matches"]])
+        return "\n\n".join([match["metadata"]["content"] for match in results["matches"]])
     return "No relevant answer found."
 
 def translate_text(text, target_lang):
