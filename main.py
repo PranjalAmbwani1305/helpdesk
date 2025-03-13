@@ -1,10 +1,11 @@
 import streamlit as st
 import pinecone
 import os
+import re
 from dotenv import load_dotenv
 from deep_translator import GoogleTranslator  
 from sentence_transformers import SentenceTransformer
-import PyPDF2
+import fitz  # PyMuPDF for better PDF extraction
 
 # Load environment variables
 load_dotenv()
@@ -21,15 +22,35 @@ pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 index = pc.Index(index_name)
 
-# Function to Process PDF and Extract Text in Chunks
+# Function to Process PDF and Extract Cleaned Text
 def process_pdf(pdf_path, chunk_size=500):
-    with open(pdf_path, "rb") as file:
-        reader = PyPDF2.PdfReader(file)
-        text = "\n".join([page.extract_text() or "" for page in reader.pages])
+    doc = fitz.open(pdf_path)
+    full_text = []
     
-    text = text.replace("\n", " ")  # Fix newlines that break sentences
-    chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+    for page in doc:
+        text = page.get_text("text")
+        text = re.sub(r'\s+', ' ', text).strip()  # Remove extra spaces
+        if text:
+            full_text.append(text)
     
+    # Join all pages into one document
+    full_text = " ".join(full_text)
+    
+    # Split into meaningful chunks (preserve sentence boundaries)
+    sentences = re.split(r'(?<=[.!?])\s+', full_text)
+    chunks = []
+    temp_chunk = ""
+    
+    for sentence in sentences:
+        if len(temp_chunk) + len(sentence) < chunk_size:
+            temp_chunk += " " + sentence
+        else:
+            chunks.append(temp_chunk.strip())
+            temp_chunk = sentence
+    
+    if temp_chunk:
+        chunks.append(temp_chunk.strip())
+
     return chunks
 
 # Check if PDF is Already Stored in Pinecone
@@ -41,26 +62,24 @@ def pdf_already_stored(pdf_name):
     return pdf_name in stored_pdfs
 
 # Store Vectors in Pinecone with Metadata
-def store_vectors(chunks, pdf_name, chapter="Unknown Chapter"):
+def store_vectors(chunks, pdf_name):
     vectors = []
     
     for i, chunk in enumerate(chunks):
         embedding = hf_model.encode(chunk).tolist()
-        vector_id = f"{pdf_name}-article-{i+1}"  # Unique ID per chunk
+        vector_id = f"{pdf_name}-chunk-{i+1}"  # Unique ID per chunk
         
         metadata = {
             "pdf_name": pdf_name,
             "text": chunk.strip(),  # Store cleaned text
-            "title": f"Article {i+1}",
-            "chapter": chapter,
-            "type": "article"
+            "chunk_id": i+1
         }
         
         vectors.append((vector_id, embedding, metadata))
     
     if vectors:
         index.upsert(vectors)
-        st.success(f"✅ {len(vectors)} articles stored successfully in Pinecone.")
+        st.success(f"✅ {len(vectors)} text chunks stored successfully in Pinecone.")
 
 # List Stored PDFs from Pinecone
 def list_stored_pdfs():
@@ -86,7 +105,7 @@ def translate_text(text, target_language):
     return GoogleTranslator(source="auto", target=target_language).translate(text)
 
 # Streamlit UI
-st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk for Saudi Arabia</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk</h1>", unsafe_allow_html=True)
 
 st.sidebar.header("📂 Stored PDFs")
 pdf_list = list_stored_pdfs()
