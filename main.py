@@ -21,48 +21,52 @@ pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 index = pc.Index(index_name)
 
-# Function to Extract Text and Chunk by Article
+# Function to Extract Text and Split into Articles
 def process_pdf(pdf_path, pdf_name, chunk_size=500):
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
         text = " ".join([page.extract_text() for page in reader.pages if page.extract_text()])
     
-    # **Split into articles using "Article X" pattern**
+    # **Split by "Article X" pattern**
     article_splits = re.split(r"(Article \d+)", text)
     chunks = []
     
     for i in range(1, len(article_splits), 2):
-        title = article_splits[i]
+        title = article_splits[i]  # "Article X"
         content = article_splits[i+1] if i+1 < len(article_splits) else ""
+        
+        # Determine Chapter based on article number
+        chapter_match = re.search(r"Article (\d+)", title)
+        chapter = f"Chapter {int(chapter_match.group(1)) // 10}" if chapter_match else "Unknown Chapter"
         
         # Break large articles into smaller chunks
         if len(content) > chunk_size:
             sub_chunks = [content[j:j+chunk_size] for j in range(0, len(content), chunk_size)]
             for part in sub_chunks:
-                chunks.append((title, part))
+                chunks.append((chapter, title, part))
         else:
-            chunks.append((title, content))
+            chunks.append((chapter, title, content))
 
     return chunks
 
-# Check if a PDF is Already Stored in Pinecone
+# Check if a PDF is Already Stored
 def pdf_already_stored(pdf_name):
     query_results = index.query(vector=[0]*384, top_k=1, filter={"pdf_name": {"$eq": pdf_name}})
     return bool(query_results["matches"])
 
-# Store Vectors in Pinecone with Metadata
-def store_vectors(chunks, pdf_name, chapter="Unknown Chapter"):
+# Store Vectors in Pinecone with Proper Metadata
+def store_vectors(chunks, pdf_name):
     vectors = []
     
-    for i, (title, text) in enumerate(chunks):
+    for i, (chapter, title, text) in enumerate(chunks):
         embedding = hf_model.encode(text).tolist()
         vector_id = f"{pdf_name}-{title.replace(' ', '-').lower()}"
 
         metadata = {
             "pdf_name": pdf_name,
-            "text": text,
-            "title": title,
             "chapter": chapter,
+            "title": title,
+            "text": text,
             "type": "article"
         }
         
@@ -72,7 +76,7 @@ def store_vectors(chunks, pdf_name, chapter="Unknown Chapter"):
         index.upsert(vectors)
         st.success(f"✅ {len(vectors)} articles stored successfully in Pinecone.")
 
-# List Stored PDFs from Pinecone
+# List Stored PDFs
 def list_stored_pdfs():
     query_results = index.query(vector=[0]*384, top_k=100, include_metadata=True)
     pdf_names = set(match["metadata"]["pdf_name"] for match in query_results["matches"])
