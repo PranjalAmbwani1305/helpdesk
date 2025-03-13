@@ -79,8 +79,13 @@ def store_vectors(chapters, articles, pdf_name):
 
 def query_vectors(query, selected_pdf):
     """Queries Pinecone for the most relevant result, prioritizing exact article matches."""
-    if "article 1" in query.lower() or "article one" in query.lower():
-        results = index.query(vector=None, top_k=1, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}, "type": {"$eq": "article"}, "title": {"$eq": "Article 1"}})
+    if re.match(r'^(article\s+\d+)$', query.lower()):
+        article_number = query.lower().replace("article", "").strip()
+        results = index.query(vector=None, top_k=1, include_metadata=True, filter={
+            "pdf_name": {"$eq": selected_pdf}, 
+            "type": {"$eq": "article"}, 
+            "title": {"$regex": f"Article {article_number}"}
+        })
         if results and results["matches"]:
             return results["matches"][0]["metadata"]["text"]
     
@@ -133,4 +138,4 @@ if st.button("Get Answer"):
         else:
             st.write(f"**Answer:** {response}")
     else:
-        st.warning("Please upload a PDF and enter a query.")
+        st.warning("Please upload a PDF and enter a query.")  
