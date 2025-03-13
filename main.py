@@ -11,9 +11,6 @@ PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
-if index_name not in pc.list_indexes():
-    pc.create_index(index_name, dimension=384, metric="cosine")  # MiniLM embedding size
-index = pc.Index(index_name)
 
 # Load Hugging Face Model
 model = SentenceTransformer("all-MiniLM-L6-v2")
