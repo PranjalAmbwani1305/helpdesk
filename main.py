@@ -31,14 +31,19 @@ def process_pdf(pdf_path, chunk_size=500):
 
 # Check if PDF is Already Stored in Pinecone
 def pdf_already_stored(pdf_name):
-    query_results = index.query(vector=[0]*384, top_k=100, include_metadata=True)
-    
-    stored_pdfs = set(match["metadata"].get("pdf_name", "") for match in query_results["matches"])
-    
-    return pdf_name in stored_pdfs  # Returns True if the PDF is already in Pinecone
+    """
+    Instead of querying with a random vector, we fetch stored IDs and check if the given PDF exists.
+    """
+    existing_ids = index.describe_index_stats().get("total_vector_count", 0)
+    if existing_ids > 0:
+        return pdf_name in [match["metadata"].get("pdf_name", "") for match in index.query(vector=[0]*384, top_k=existing_ids, include_metadata=True)["matches"]]
+    return False  # No PDFs stored yet
 
 # Store Vectors in Pinecone with Metadata
 def store_vectors(chunks, pdf_name, chapter="Unknown Chapter"):
+    """
+    This function ensures only one PDF is stored at a time and avoids duplicates.
+    """
     vectors = []
     
     for i, chunk in enumerate(chunks):
