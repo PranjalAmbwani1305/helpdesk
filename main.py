@@ -1,102 +1,134 @@
 import streamlit as st
 import pinecone
-import PyPDF2
 import os
-import re
+from dotenv import load_dotenv
+from deep_translator import GoogleTranslator  
 from sentence_transformers import SentenceTransformer
+import PyPDF2
 
-# --- CONFIGURATION ---
-st.set_page_config(page_title="Legal HelpDesk", layout="wide")
+# Load environment variables
+load_dotenv()
+
+# Initialize Hugging Face Model for Embeddings
+hf_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+
+# Pinecone Connection
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-INDEX_NAME = "helpdesk"
+PINECONE_ENV = os.getenv("PINECONE_ENV")
 
+pc = Pinecone(api_key=PINECONE_API_KEY)
+index_name = "helpdesk"
+index = pc.Index(index_name)
 
-pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
-index = pc.Index(INDEX_NAME)
-
-# --- LOAD EMBEDDING MODEL ---
-model = SentenceTransformer("all-MiniLM-L6-v2")
-
-# --- UI ELEMENTS ---
-st.sidebar.header("📄 Upload Legal Documents")
-uploaded_files = st.sidebar.file_uploader("Upload PDFs", type=["pdf"], accept_multiple_files=True)
-st.sidebar.markdown("---")
-
-st.sidebar.header("🔍 Query HelpDesk")
-query = st.sidebar.text_input("Enter a legal query", placeholder="e.g., Land acquisition law in India")
-query_button = st.sidebar.button("Search")
-
-# --- MAIN LOG DISPLAY ---
-st.title("📚 AI-Powered Legal HelpDesk")
-log_area = st.empty()
-
-# --- FUNCTIONS ---
-def extract_articles_from_pdf(pdf_file, pdf_name):
-    """Extracts chapters and articles from a PDF."""
-    text = ""
-    reader = PyPDF2.PdfReader(pdf_file)
-    for page in reader.pages:
-        text += page.extract_text() + "\n"
-
-    # Split text by chapter and article numbering
-    chapters = re.split(r"(Chapter [A-Za-z0-9 ]+:)", text)
+# Function to Process PDF and Extract Text in Chunks
+def process_pdf(pdf_path, chunk_size=500):
+    with open(pdf_path, "rb") as file:
+        reader = PyPDF2.PdfReader(file)
+        text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
     
-    structured_articles = []
-    current_chapter = "Unknown Chapter"
+    chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+    return chunks
 
-    for section in chapters:
-        if section.strip().startswith("Chapter"):
-            current_chapter = section.strip()
-        else:
-            articles = re.split(r"(Article \d+:)", section)
-            for i in range(1, len(articles), 2):
-                article_title = articles[i].strip()
-                article_content = articles[i + 1].strip() if i + 1 < len(articles) else ""
-                structured_articles.append((pdf_name, current_chapter, article_title, article_content))
+# Check if PDF is Already Stored in Pinecone
+def pdf_already_stored(pdf_name):
+    query_results = index.query(vector=[0]*384, top_k=1, filter={"pdf_name": {"$eq": pdf_name}})
+    return bool(query_results["matches"])
 
-    return structured_articles
-
-def store_vectors(pdf_articles):
-    """Stores extracted articles as separate vectors in Pinecone."""
+# Store Vectors in Pinecone with Metadata
+def store_vectors(chunks, pdf_name, chapter="Unknown Chapter"):
     vectors = []
-    for pdf_name, chapter_title, article_title, article_content in pdf_articles:
-        content_to_store = f"{article_title}\n{article_content}"
-        embedding = model.encode(content_to_store).tolist()
-        vector_id = f"{pdf_name}-{article_title.replace(' ', '_')}"
+    
+    for i, chunk in enumerate(chunks):
+        embedding = hf_model.encode(chunk).tolist()
+        vector_id = f"{pdf_name}-article-{i+1}"  # Unique ID per chunk
+        
         metadata = {
             "pdf_name": pdf_name,
-            "chapter": chapter_title,
-            "title": article_title,
-            "text": article_content,
+            "text": chunk,
+            "title": f"Article {i+1}",
+            "chapter": chapter,
             "type": "article"
         }
+        
         vectors.append((vector_id, embedding, metadata))
     
     if vectors:
         index.upsert(vectors)
-        log_area.text(f"✅ {len(vectors)} articles stored successfully in Pinecone.")
+        st.success(f"✅ {len(vectors)} articles stored successfully in Pinecone.")
 
-# --- PDF PROCESSING ---
-if uploaded_files:
-    all_articles = []
-    for pdf_file in uploaded_files:
-        pdf_name = pdf_file.name
-        articles = extract_articles_from_pdf(pdf_file, pdf_name)
-        all_articles.extend(articles)
+# List Stored PDFs from Pinecone
+def list_stored_pdfs():
+    query_results = index.query(vector=[0]*384, top_k=100, include_metadata=True)
+    pdf_names = set(match["metadata"]["pdf_name"] for match in query_results["matches"])
+    return list(pdf_names)
+
+# Query Pinecone for Relevant Information
+def query_vectors(query, selected_pdf):
+    vector = hf_model.encode(query).tolist()
     
-    if all_articles:
-        store_vectors(all_articles)
+    results = index.query(vector=vector, top_k=5, include_metadata=True, filter={"pdf_name": {"$eq": selected_pdf}})
 
-# --- SEARCH FUNCTIONALITY ---
-if query_button and query:
-    query_embedding = model.encode(query).tolist()
-    results = index.query(query_embedding, top_k=5, include_metadata=True)
+    if results["matches"]:
+        matched_texts = [match["metadata"]["text"] for match in results["matches"]]
 
-    st.subheader("🔍 Search Results")
-    for match in results["matches"]:
-        metadata = match["metadata"]
-        st.write(f"📄 **PDF:** {metadata['pdf_name']}")
-        st.write(f"📖 **Chapter:** {metadata['chapter']}")
-        st.write(f"📌 **Article:** {metadata['title']}")
-        st.write(f"📝 **Content:** {metadata['text'][:300]}...")  # Show preview
-        st.markdown("---")
+        combined_text = "\n\n".join(matched_texts)
+
+        return combined_text
+    else:
+        return "No relevant information found in the selected document."
+
+# Translate Text
+def translate_text(text, target_language):
+    return GoogleTranslator(source="auto", target=target_language).translate(text)
+
+# Streamlit UI
+st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk for Saudi Arabia</h1>", unsafe_allow_html=True)
+
+st.sidebar.header("📂 Stored PDFs")
+pdf_list = list_stored_pdfs()
+if pdf_list:
+    with st.sidebar.expander("📜 View Stored PDFs", expanded=False):
+        for pdf in pdf_list:
+            st.sidebar.write(f"📄 {pdf}")
+else:
+    st.sidebar.write("No PDFs stored yet. Upload one!")
+
+selected_pdf = None
+
+# PDF Selection
+pdf_source = st.radio("Select PDF Source", ["Upload from PC", "Choose from the Document Storage"])
+
+if pdf_source == "Upload from PC":
+    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
+    if uploaded_file:
+        temp_pdf_path = f"temp_{uploaded_file.name}"
+        with open(temp_pdf_path, "wb") as f:
+            f.write(uploaded_file.read())
+
+        if not pdf_already_stored(uploaded_file.name):
+            chunks = process_pdf(temp_pdf_path)
+            store_vectors(chunks, uploaded_file.name)  # Store with metadata
+            st.success("PDF uploaded and processed!")
+        else:
+            st.info("This PDF has already been processed!")
+
+        selected_pdf = uploaded_file.name
+
+elif pdf_source == "Choose from the Document Storage":
+    if pdf_list:
+        selected_pdf = st.selectbox("Select a PDF", pdf_list)
+    else:
+        st.warning("No PDFs available in the repository. Please upload one!")
+
+# Search Query
+query = st.text_input("Ask a question related to the selected document:")
+
+if query and selected_pdf:
+    response = query_vectors(query, selected_pdf)
+    st.write(response)
+
+# Translation
+if query:
+    lang = st.selectbox("Translate Response To:", ["English", "Arabic", "French", "Hindi"])
+    translated_text = translate_text(response, lang.lower())
+    st.write(f"**Translated:** {translated_text}")
