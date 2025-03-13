@@ -11,9 +11,6 @@ PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 
-# Check if index exists, otherwise create it
-if index_name not in pc.list_indexes():
-    pc.create_index(name=index_name, dimension=384)  
 index = pc.Index(index_name)
 
 # Load Sentence-Transformer model
