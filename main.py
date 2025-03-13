@@ -1,6 +1,7 @@
 import streamlit as st
 import pinecone
 import os
+import re
 from dotenv import load_dotenv
 from deep_translator import GoogleTranslator  
 from sentence_transformers import SentenceTransformer
@@ -20,16 +21,31 @@ pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
 index = pc.Index(index_name)
 
-# Function to Process PDF and Extract Text in Chunks
-def process_pdf(pdf_path, chunk_size=500):
+# Function to Extract Text and Chunk by Article
+def process_pdf(pdf_path, pdf_name, chunk_size=500):
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
-        text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
+        text = " ".join([page.extract_text() for page in reader.pages if page.extract_text()])
     
-    chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+    # **Split into articles using "Article X" pattern**
+    article_splits = re.split(r"(Article \d+)", text)
+    chunks = []
+    
+    for i in range(1, len(article_splits), 2):
+        title = article_splits[i]
+        content = article_splits[i+1] if i+1 < len(article_splits) else ""
+        
+        # Break large articles into smaller chunks
+        if len(content) > chunk_size:
+            sub_chunks = [content[j:j+chunk_size] for j in range(0, len(content), chunk_size)]
+            for part in sub_chunks:
+                chunks.append((title, part))
+        else:
+            chunks.append((title, content))
+
     return chunks
 
-# Check if PDF is Already Stored in Pinecone
+# Check if a PDF is Already Stored in Pinecone
 def pdf_already_stored(pdf_name):
     query_results = index.query(vector=[0]*384, top_k=1, filter={"pdf_name": {"$eq": pdf_name}})
     return bool(query_results["matches"])
@@ -38,14 +54,14 @@ def pdf_already_stored(pdf_name):
 def store_vectors(chunks, pdf_name, chapter="Unknown Chapter"):
     vectors = []
     
-    for i, chunk in enumerate(chunks):
-        embedding = hf_model.encode(chunk).tolist()
-        vector_id = f"{pdf_name}-article-{i+1}"  # Unique ID per chunk
-        
+    for i, (title, text) in enumerate(chunks):
+        embedding = hf_model.encode(text).tolist()
+        vector_id = f"{pdf_name}-{title.replace(' ', '-').lower()}"
+
         metadata = {
             "pdf_name": pdf_name,
-            "text": chunk,
-            "title": f"Article {i+1}",
+            "text": text,
+            "title": title,
             "chapter": chapter,
             "type": "article"
         }
@@ -70,14 +86,12 @@ def query_vectors(query, selected_pdf):
 
     if results["matches"]:
         matched_texts = [match["metadata"]["text"] for match in results["matches"]]
-
         combined_text = "\n\n".join(matched_texts)
-
         return combined_text
     else:
         return "No relevant information found in the selected document."
 
-# Translate Text
+# Translation Function
 def translate_text(text, target_language):
     return GoogleTranslator(source="auto", target=target_language).translate(text)
 
@@ -106,7 +120,7 @@ if pdf_source == "Upload from PC":
             f.write(uploaded_file.read())
 
         if not pdf_already_stored(uploaded_file.name):
-            chunks = process_pdf(temp_pdf_path)
+            chunks = process_pdf(temp_pdf_path, uploaded_file.name)
             store_vectors(chunks, uploaded_file.name)  # Store with metadata
             st.success("PDF uploaded and processed!")
         else:
