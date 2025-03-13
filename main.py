@@ -15,6 +15,7 @@ hf_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 # Pinecone Connection
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 PINECONE_ENV = os.getenv("PINECONE_ENV")
+
 from pinecone import Pinecone
 pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "helpdesk"
@@ -24,26 +25,23 @@ index = pc.Index(index_name)
 def process_pdf(pdf_path, chunk_size=500):
     with open(pdf_path, "rb") as file:
         reader = PyPDF2.PdfReader(file)
-        text = "".join([page.extract_text() for page in reader.pages if page.extract_text()])
+        text = "\n".join([page.extract_text() or "" for page in reader.pages])
     
+    text = text.replace("\n", " ")  # Fix newlines that break sentences
     chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+    
     return chunks
 
 # Check if PDF is Already Stored in Pinecone
 def pdf_already_stored(pdf_name):
-    """
-    Instead of querying with a random vector, we fetch stored IDs and check if the given PDF exists.
-    """
-    existing_ids = index.describe_index_stats().get("total_vector_count", 0)
-    if existing_ids > 0:
-        return pdf_name in [match["metadata"].get("pdf_name", "") for match in index.query(vector=[0]*384, top_k=existing_ids, include_metadata=True)["matches"]]
-    return False  # No PDFs stored yet
+    query_results = index.query(vector=[0]*384, top_k=100, include_metadata=True)
+    
+    stored_pdfs = set(match["metadata"].get("pdf_name", "") for match in query_results["matches"])
+    
+    return pdf_name in stored_pdfs
 
 # Store Vectors in Pinecone with Metadata
 def store_vectors(chunks, pdf_name, chapter="Unknown Chapter"):
-    """
-    This function ensures only one PDF is stored at a time and avoids duplicates.
-    """
     vectors = []
     
     for i, chunk in enumerate(chunks):
@@ -52,7 +50,7 @@ def store_vectors(chunks, pdf_name, chapter="Unknown Chapter"):
         
         metadata = {
             "pdf_name": pdf_name,
-            "text": chunk,
+            "text": chunk.strip(),  # Store cleaned text
             "title": f"Article {i+1}",
             "chapter": chapter,
             "type": "article"
@@ -78,9 +76,7 @@ def query_vectors(query, selected_pdf):
 
     if results["matches"]:
         matched_texts = [match["metadata"]["text"] for match in results["matches"]]
-
         combined_text = "\n\n".join(matched_texts)
-
         return combined_text
     else:
         return "No relevant information found in the selected document."
@@ -115,7 +111,7 @@ if pdf_source == "Upload from PC":
 
         if not pdf_already_stored(uploaded_file.name):
             chunks = process_pdf(temp_pdf_path)
-            store_vectors(chunks, uploaded_file.name)  # Store with metadata
+            store_vectors(chunks, uploaded_file.name)
             st.success("PDF uploaded and processed!")
         else:
             st.info("This PDF has already been processed!")
