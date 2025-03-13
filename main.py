@@ -10,15 +10,8 @@ PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 INDEX_NAME = "helpdesk"
 
 # --- INITIALIZE PINECONE ---
-if not PINECONE_API_KEY:
-    st.error("⚠️ Pinecone API key is missing. Set it as an environment variable.")
-    st.stop()
 
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
-existing_indexes = pc.list_indexes()
-if INDEX_NAME not in existing_indexes:
-    st.error(f"⚠️ Pinecone index '{INDEX_NAME}' not found. Create it first.")
-    st.stop()
 
 index = pc.Index(INDEX_NAME)
 
