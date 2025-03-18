@@ -1,8 +1,8 @@
 import streamlit as st
 import pinecone
-import PyPDF2
 import os
 import re
+import PyPDF2
 from sentence_transformers import SentenceTransformer
 
 # Pinecone Configuration
@@ -14,29 +14,44 @@ pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index = pc.Index(INDEX_NAME)
 
 
-# Load Hugging Face Model for Embeddings
+# Load Embedding Model
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Streamlit UI Layout
-st.set_page_config(page_title="PDF Article Extractor", layout="wide")
+# Streamlit UI
+st.set_page_config(page_title="Legal HelpDesk - Saudi Arabia", layout="wide")
 
-st.title("📜 PDF Article Extractor & Pinecone Storage")
-st.write("Upload multiple PDFs, extract articles, and store them in Pinecone.")
+# Sidebar for PDF Storage
+st.sidebar.title("📂 Uploaded PDFs")
+if "uploaded_pdfs" not in st.session_state:
+    st.session_state["uploaded_pdfs"] = []
 
-# File Uploader
-uploaded_files = st.file_uploader("Upload PDF files", type=["pdf"], accept_multiple_files=True)
+# File Upload Section
+st.title("🤖 AI-Powered Legal HelpDesk for Saudi Arabia")
+st.write("Upload PDFs and ask legal questions.")
 
-def extract_text_from_pdf(pdf_file):
-    """Extracts text from a PDF file."""
-    text = ""
-    try:
-        pdf_reader = PyPDF2.PdfReader(pdf_file)
-        for page in pdf_reader.pages:
-            text += page.extract_text() + "\n"
-    except Exception as e:
-        st.error(f"Error reading PDF: {e}")
-    return text.strip()
+pdf_source = st.radio("Select PDF Source:", ["Upload from PC", "Choose from Document Storage"])
 
+if pdf_source == "Upload from PC":
+    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"], help="Limit: 200MB per file", accept_multiple_files=False)
+    
+    if uploaded_file:
+        pdf_name = uploaded_file.name
+        if pdf_name not in st.session_state["uploaded_pdfs"]:
+            st.session_state["uploaded_pdfs"].append(pdf_name)
+
+elif pdf_source == "Choose from Document Storage":
+    if st.session_state["uploaded_pdfs"]:
+        pdf_name = st.selectbox("Select a previously uploaded PDF:", st.session_state["uploaded_pdfs"])
+    else:
+        st.warning("No PDFs uploaded yet.")
+        pdf_name = None
+
+# Language Selection
+st.subheader("🌍 Choose Languages")
+input_language = st.radio("Choose Input Language", ["English", "Arabic"], horizontal=True)
+response_language = st.radio("Choose Response Language", ["English", "Arabic"], horizontal=True)
+
+# Function to Extract Articles
 def extract_articles(text, pdf_name):
     """Extracts articles and their metadata from the PDF."""
     articles = []
@@ -69,10 +84,10 @@ def extract_articles(text, pdf_name):
                 article_content = []
 
             current_article = article_match.group(1)
-            article_content.append(line)  # Start new article content
+            article_content.append(line)
 
         elif current_article:
-            article_content.append(line)  # Append content to the current article
+            article_content.append(line)
 
     # Store the last article
     if current_article and article_content:
@@ -85,11 +100,21 @@ def extract_articles(text, pdf_name):
 
     return articles
 
-def store_articles_in_pinecone(articles):
-    """Stores articles in Pinecone with proper embeddings."""
+# Extract Text and Store in Pinecone
+if uploaded_file:
+    text = ""
+    try:
+        pdf_reader = PyPDF2.PdfReader(uploaded_file)
+        for page in pdf_reader.pages:
+            text += page.extract_text() + "\n"
+    except Exception as e:
+        st.error(f"Error reading PDF: {e}")
+
+    articles = extract_articles(text, pdf_name)
+
     vectors = []
     for article in articles:
-        article_id = f"{article['pdf_name']}-article-{article['article_number']}"
+        article_id = f"{pdf_name}-article-{article['article_number']}"
         embedding = model.encode(article["text"]).tolist()
 
         vectors.append({
@@ -98,7 +123,7 @@ def store_articles_in_pinecone(articles):
             "metadata": {
                 "article_number": article["article_number"],
                 "chapter_number": article["chapter_number"],
-                "pdf_name": article["pdf_name"],
+                "pdf_name": pdf_name,
                 "text": article["text"],
                 "type": "article"
             }
@@ -109,37 +134,21 @@ def store_articles_in_pinecone(articles):
         index.upsert(vectors)
         st.success(f"✅ Stored {len(vectors)} articles in Pinecone.")
 
-def process_pdfs_and_store(uploaded_files):
-    """Extracts articles from multiple PDFs and stores them in Pinecone."""
-    all_articles = []
-    for pdf_file in uploaded_files:
-        pdf_name = os.path.basename(pdf_file.name)
-        text = extract_text_from_pdf(pdf_file)
-        articles = extract_articles(text, pdf_name)
-        all_articles.extend(articles)
-    store_articles_in_pinecone(all_articles)
-
-# Process PDFs
-if uploaded_files:
-    with st.spinner("Processing PDFs..."):
-        process_pdfs_and_store(uploaded_files)
-
-# Search UI
-st.subheader("🔍 Search Articles")
-query = st.text_input("Enter search query")
+# Search Query
+st.subheader("🔍 Ask a Legal Question")
+query = st.text_area("Enter your question (English or Arabic):")
 
 if query:
-    with st.spinner("Searching..."):
-        query_embedding = model.encode(query).tolist()
-        results = index.query(queries=[query_embedding], top_k=5, include_metadata=True)
+    query_embedding = model.encode(query).tolist()
+    results = index.query(queries=[query_embedding], top_k=5, include_metadata=True)
 
-        if results and results['results']:
-            for match in results['results'][0]['matches']:
-                metadata = match['metadata']
-                st.markdown(f"### **Article {metadata['article_number']}**")
-                st.markdown(f"📂 **PDF:** {metadata['pdf_name']}")
-                st.markdown(f"📖 **Chapter:** {metadata['chapter_number']}")
-                st.markdown(f"✍ **Text:** {metadata['text']}")
-                st.write("---")
-        else:
-            st.warning("No matching articles found.")
+    if results and results['results']:
+        for match in results['results'][0]['matches']:
+            metadata = match['metadata']
+            st.markdown(f"### **Article {metadata['article_number']}**")
+            st.markdown(f"📂 **PDF:** {metadata['pdf_name']}")
+            st.markdown(f"📖 **Chapter:** {metadata['chapter_number']}")
+            st.markdown(f"✍ **Text:** {metadata['text']}")
+            st.write("---")
+    else:
+        st.warning("No relevant legal articles found.")
