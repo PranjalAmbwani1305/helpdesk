@@ -9,13 +9,22 @@ from sentence_transformers import SentenceTransformer
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 INDEX_NAME = "helpdesk"
 
-# Initialize Pinecone
-pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 
+pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index = pc.Index(INDEX_NAME)
+
 
 # Load Hugging Face Model for Embeddings
 model = SentenceTransformer("all-MiniLM-L6-v2")
+
+# Streamlit UI Layout
+st.set_page_config(page_title="PDF Article Extractor", layout="wide")
+
+st.title("📜 PDF Article Extractor & Pinecone Storage")
+st.write("Upload multiple PDFs, extract articles, and store them in Pinecone.")
+
+# File Uploader
+uploaded_files = st.file_uploader("Upload PDF files", type=["pdf"], accept_multiple_files=True)
 
 def extract_text_from_pdf(pdf_file):
     """Extracts text from a PDF file."""
@@ -98,19 +107,39 @@ def store_articles_in_pinecone(articles):
     # Store in Pinecone
     if vectors:
         index.upsert(vectors)
-        st.success(f"Stored {len(vectors)} articles in Pinecone.")
+        st.success(f"✅ Stored {len(vectors)} articles in Pinecone.")
 
-def process_pdf_and_store(pdf_file):
-    """Extracts articles from PDF and stores them in Pinecone."""
-    pdf_name = os.path.basename(pdf_file.name)
-    text = extract_text_from_pdf(pdf_file)
-    articles = extract_articles(text, pdf_name)
-    store_articles_in_pinecone(articles)
+def process_pdfs_and_store(uploaded_files):
+    """Extracts articles from multiple PDFs and stores them in Pinecone."""
+    all_articles = []
+    for pdf_file in uploaded_files:
+        pdf_name = os.path.basename(pdf_file.name)
+        text = extract_text_from_pdf(pdf_file)
+        articles = extract_articles(text, pdf_name)
+        all_articles.extend(articles)
+    store_articles_in_pinecone(all_articles)
 
-# Streamlit File Uploader
-st.title("PDF Article Extractor & Pinecone Storage")
-pdf_file = st.file_uploader("Upload a PDF", type=["pdf"])
+# Process PDFs
+if uploaded_files:
+    with st.spinner("Processing PDFs..."):
+        process_pdfs_and_store(uploaded_files)
 
-if pdf_file:
-    process_pdf_and_store(pdf_file)
-    st.success("PDF processed and stored successfully in Pinecone!")
+# Search UI
+st.subheader("🔍 Search Articles")
+query = st.text_input("Enter search query")
+
+if query:
+    with st.spinner("Searching..."):
+        query_embedding = model.encode(query).tolist()
+        results = index.query(queries=[query_embedding], top_k=5, include_metadata=True)
+
+        if results and results['results']:
+            for match in results['results'][0]['matches']:
+                metadata = match['metadata']
+                st.markdown(f"### **Article {metadata['article_number']}**")
+                st.markdown(f"📂 **PDF:** {metadata['pdf_name']}")
+                st.markdown(f"📖 **Chapter:** {metadata['chapter_number']}")
+                st.markdown(f"✍ **Text:** {metadata['text']}")
+                st.write("---")
+        else:
+            st.warning("No matching articles found.")
