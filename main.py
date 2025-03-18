@@ -1,11 +1,8 @@
-import streamlit as st
 import os
 import pinecone
-from PyPDF2 import PdfReader
-import hashlib
-from deep_translator import GoogleTranslator
+import streamlit as st
 
-# Pinecone Configuration
+# Load Pinecone API Key from environment variable
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 INDEX_NAME = "helpdesk"
 
@@ -13,73 +10,57 @@ INDEX_NAME = "helpdesk"
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index = pc.Index(INDEX_NAME)
 
-# Function to generate a unique ID for each document
-def generate_pdf_id(pdf_name):
-    return hashlib.md5(pdf_name.encode()).hexdigest()
-
-# Function to upload PDF content to Pinecone
-def upload_pdf_to_pinecone(file_name, file_content):
-    pdf_id = generate_pdf_id(file_name)
-    index.upsert(vectors=[
-        {
-            "id": pdf_id,
-            "values": [0] * 384,  # Dummy vector
-            "metadata": {"file_name": file_name, "content": file_content}
-        }
-    ])
-    return pdf_id
-
 # Function to fetch stored PDFs from Pinecone
 def get_stored_pdfs():
     try:
-        response = index.query(queries=[[0] * 384], top_k=50, include_metadata=True)
-        return [match["metadata"]["file_name"] for match in response["matches"]]
+        response = index.describe_index_stats()
+        vector_count = response["total_vector_count"]
+        
+        stored_pdfs = []
+        if vector_count > 0:
+            for i in range(vector_count):
+                vector = index.fetch([str(i)])
+                if vector and "metadata" in vector["vectors"][str(i)]:
+                    metadata = vector["vectors"][str(i)]["metadata"]
+                    if "filename" in metadata:
+                        stored_pdfs.append(metadata["filename"])
+
+        return stored_pdfs
     except Exception as e:
-        st.error("Error fetching stored PDFs: " + str(e))
+        st.error(f"Error fetching stored PDFs: {e}")
         return []
 
-# Function for translation
-def translate_text(text, src_lang, target_lang):
-    if src_lang != target_lang:
-        return GoogleTranslator(source=src_lang, target=target_lang).translate(text)
-    return text
-
-# UI Layout
-st.title("📜 AI-Powered Legal HelpDesk for Saudi Arabia")
-
-# Sidebar: Show previously uploaded PDFs
-st.sidebar.header("📁 Uploaded PDFs")
+# Fetch stored PDFs dynamically
 stored_pdfs = get_stored_pdfs()
-selected_pdf = st.sidebar.selectbox("Select a PDF:", stored_pdfs if stored_pdfs else ["No PDFs uploaded yet"])
 
-# Language Selection
-st.sidebar.header("🌍 Language Settings")
-input_language = st.sidebar.radio("Choose Input Language:", ["English", "Arabic"])
-response_language = st.sidebar.radio("Choose Response Language:", ["English", "Arabic"])
+# Streamlit UI
+st.title("⚖️ AI-Powered Legal HelpDesk for Saudi Arabia")
 
-# File Upload Section
-st.subheader("📂 Upload a PDF")
-uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
+# Sidebar: Display stored PDFs
+st.sidebar.title("📂 Stored PDFs")
+
+if stored_pdfs:
+    for pdf in stored_pdfs:
+        st.sidebar.markdown(f"📄 {pdf}")
+else:
+    st.sidebar.write("No PDFs stored yet.")
+
+# File uploader for new PDFs
+st.subheader("Upload a PDF")
+uploaded_file = st.file_uploader("Drag and drop a file here", type="pdf")
 
 if uploaded_file:
-    pdf_reader = PdfReader(uploaded_file)
-    text_content = "\n".join([page.extract_text() for page in pdf_reader.pages if page.extract_text()])
+    filename = uploaded_file.name
+    file_data = uploaded_file.read()
+
+    # Store metadata in Pinecone
+    index.upsert(vectors=[
+        {"id": filename, "values": [0.0] * 128, "metadata": {"filename": filename}}
+    ])
     
-    # Translate text if needed
-    translated_text = translate_text(text_content, "en" if input_language == "English" else "ar", "en")
+    st.success(f"📄 {filename} has been stored in Pinecone.")
 
-    # Store in Pinecone
-    upload_pdf_to_pinecone(uploaded_file.name, translated_text)
-    st.success(f"✅ {uploaded_file.name} uploaded successfully!")
-
-# Ask a Question
-st.subheader("❓ Ask a Question")
-question = st.text_area("Enter your question:", "")
-
-if st.button("Submit"):
-    if question:
-        translated_question = translate_text(question, "en" if input_language == "English" else "ar", "en")
-        st.write(f"📝 Answer in {response_language}: {translated_question}")  # Placeholder for response
-    else:
-        st.warning("⚠️ Please enter a question!")
-
+# Input fields for user query
+st.subheader("Ask a Legal Question")
+st.text_input("Enter your question here:")
+st.button("Get Answer")
