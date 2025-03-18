@@ -1,94 +1,90 @@
-import streamlit as st
 import os
-from dotenv import load_dotenv
-from deep_translator import GoogleTranslator  
+import fitz  # PyMuPDF for PDF text extraction
+import pinecone
+import streamlit as st
 from sentence_transformers import SentenceTransformer
-import PyPDF2
-from pinecone import Pinecone
+from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
-
-# Initialize Hugging Face Model for Embeddings
-hf_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-
-# Pinecone Connection Setup
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-PINECONE_ENV = os.getenv("PINECONE_ENV")
-INDEX_NAME = "helpdesk"
+INDEX_NAME = "legal_helpdesk"
 
 # Initialize Pinecone
-pc = Pinecone(api_key=PINECONE_API_KEY)
+pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
+if INDEX_NAME not in [i.name for i in pc.list_indexes()]:
+    pc.create_index(INDEX_NAME, dimension=384, metric="cosine")
 
-# Check if the index exists before using it
-if INDEX_NAME in [i.name for i in pc.list_indexes()]:
-    index = pc.Index(INDEX_NAME)
-else:
-    st.error(f"❌ Pinecone index '{INDEX_NAME}' not found! Please create it first.")
-    st.stop()
+index = pc.Index(INDEX_NAME)
 
-# Function to Process PDF and Extract Text in Chunks
-def process_pdf(pdf_path, chunk_size=500):
-    with open(pdf_path, "rb") as file:
-        reader = PyPDF2.PdfReader(file)
-        text = "\n".join([page.extract_text() or "" for page in reader.pages])
-    
-    text = text.replace("\n", " ")  # Fix newlines that break sentences
-    chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
-    
-    return chunks
+# Load Sentence Transformer Model
+hf_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
-# Check if PDF is Already Stored in Pinecone
-def pdf_already_stored(pdf_name):
-    try:
-        query_results = index.query(vector=[0]*384, top_k=100, include_metadata=True)
-        stored_pdfs = set(match["metadata"].get("pdf_name", "") for match in query_results["matches"])
-        return pdf_name in stored_pdfs
-    except Exception as e:
-        st.error(f"❌ Error querying Pinecone: {e}")
-        return False
+# ------------------------------ PDF Processing ------------------------------
+def extract_text_from_pdf(pdf_path):
+    """Extract text from a PDF file."""
+    text_list = []
+    pdf_document = fitz.open(pdf_path)
+    for page_num in range(len(pdf_document)):
+        page = pdf_document[page_num]
+        text = page.get_text("text")
+        text_list.append(text)
+    return "\n".join(text_list)
 
-# Store Vectors in Pinecone with Metadata
-def store_vectors(chunks, pdf_name):
-    vectors = []
-    
-    for i, chunk in enumerate(chunks):
-        embedding = hf_model.encode(chunk).tolist()
-        vector_id = f"{pdf_name}-chunk-{i+1}"  # Unique ID per chunk
-        
-        metadata = {
-            "pdf_name": pdf_name,
-            "text": chunk.strip(),
-            "chunk_id": i+1
-        }
-        
-        vectors.append((vector_id, embedding, metadata))
-    
-    if vectors:
-        index.upsert(vectors)
-        st.success(f"✅ {len(vectors)} chunks stored successfully in Pinecone.")
+def store_pdf_in_pinecone(pdf_name, text):
+    """Splits text, creates embeddings, and stores in Pinecone."""
+    paragraphs = text.split("\n\n")
+    for i, para in enumerate(paragraphs):
+        if len(para.strip()) > 10:  # Skip very short texts
+            embedding = hf_model.encode(para).tolist()
+            metadata = {
+                "pdf_name": pdf_name,
+                "text": para,
+                "article_number": str(i + 1),
+                "type": "article"
+            }
+            index.upsert([(f"{pdf_name}-article-{i}", embedding, metadata)])
 
-# Streamlit UI
-st.markdown("<h1 style='text-align: center;'>AI-Powered Legal HelpDesk</h1>", unsafe_allow_html=True)
+def process_and_store_pdfs(uploaded_files):
+    """Processes multiple PDFs, extracts text, and stores in Pinecone."""
+    for uploaded_file in uploaded_files:
+        pdf_name = uploaded_file.name
+        text = extract_text_from_pdf(uploaded_file)
+        store_pdf_in_pinecone(pdf_name, text)
+        st.success(f"📄 '{pdf_name}' uploaded and processed successfully!")
 
-# Sidebar: PDF Selection
-st.sidebar.header("📂 Select PDF Source")
+# ------------------------------ Streamlit UI ------------------------------
+st.set_page_config(page_title="Legal HelpDesk", layout="wide")
 
-# PDF Upload
-pdf_source = st.radio("Select PDF Source", ["Upload from PC"])
+st.title("📜 AI-Powered Legal HelpDesk for Saudi Arabia")
+st.subheader("Upload Legal Documents & Ask Questions")
 
-if pdf_source == "Upload from PC":
-    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
-    if uploaded_file:
-        temp_pdf_path = f"temp_{uploaded_file.name}"
-        with open(temp_pdf_path, "wb") as f:
-            f.write(uploaded_file.read())
+# File Upload (Multiple PDFs)
+uploaded_files = st.file_uploader("Upload PDF Documents", type=["pdf"], accept_multiple_files=True)
 
-        if not pdf_already_stored(uploaded_file.name):
-            chunks = process_pdf(temp_pdf_path)
-            store_vectors(chunks, uploaded_file.name)
-            st.success("✅ PDF uploaded and processed!")
-        else:
-            st.info("ℹ️ This PDF has already been processed!")
+if uploaded_files:
+    process_and_store_pdfs(uploaded_files)
 
-st.stop()
+# Language Selection
+col1, col2 = st.columns(2)
+with col1:
+    input_lang = st.radio("Choose Input Language", ["English", "Arabic"])
+with col2:
+    response_lang = st.radio("Choose Response Language", ["English", "Arabic"])
+
+# Query Box
+query = st.text_input("Ask a question (in English or Arabic):", "")
+
+if query:
+    query_embedding = hf_model.encode(query).tolist()
+    results = index.query(vector=query_embedding, top_k=10, include_metadata=True)
+
+    st.subheader(f"🔍 Showing {len(results['matches'])} results")
+
+    for i, match in enumerate(results["matches"], start=1):
+        metadata = match["metadata"]
+        st.markdown(f"### {i}")
+        st.markdown(f"**📄 Document:** {metadata['pdf_name']}")
+        st.markdown(f"**📜 Article:** {metadata['article_number']}")
+        st.markdown(f"**✍️ Text:** {metadata['text']}")
+        st.markdown("---")
