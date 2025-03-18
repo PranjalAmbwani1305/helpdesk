@@ -1,8 +1,7 @@
+import os
 import streamlit as st
 import pinecone
-import fitz  # PyMuPDF for PDF text extraction
-import hashlib
-import os
+import PyPDF2
 
 # Pinecone Configuration
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
@@ -15,13 +14,14 @@ index = pc.Index(INDEX_NAME)
 # Streamlit UI
 st.title("📜 AI-Powered Legal HelpDesk for Saudi Arabia")
 
-# Sidebar: Show uploaded PDFs
+# Sidebar for Uploaded PDFs
 st.sidebar.title("📂 Uploaded PDFs")
 
+# Ensure session state stores PDFs
 if "uploaded_pdfs" not in st.session_state:
     st.session_state["uploaded_pdfs"] = {}
 
-# Fetch PDFs from Pinecone
+# Load PDFs stored in Pinecone
 pinecone_docs = set()
 query_results = index.query(queries=[[0] * 384], top_k=50, include_metadata=True)  # Dummy query to fetch stored PDFs
 if query_results and query_results.get('results'):
@@ -39,49 +39,49 @@ if all_pdfs:
 else:
     st.sidebar.warning("No PDFs uploaded yet.")
 
-# File Upload
-st.subheader("Upload a PDF")
-uploaded_file = st.file_uploader("Choose a PDF", type="pdf")
+# File Upload Section
+st.subheader("📂 Upload a PDF")
+uploaded_file = st.file_uploader("Choose a PDF file", type=["pdf"])
 
 if uploaded_file:
     pdf_name = uploaded_file.name
-    if pdf_name not in st.session_state["uploaded_pdfs"]:
-        st.session_state["uploaded_pdfs"][pdf_name] = uploaded_file
-        st.sidebar.success(f"📄 {pdf_name} added!")
+    st.session_state["uploaded_pdfs"][pdf_name] = uploaded_file
 
-# Function: Extract Text from PDF
-def extract_text_from_pdf(pdf_file):
-    text = ""
-    doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
-    for page in doc:
-        text += page.get_text("text") + "\n"
-    return text.strip()
+    # Read and store the PDF content
+    with open(f"temp_{pdf_name}", "wb") as f:
+        f.write(uploaded_file.getbuffer())
 
-# Store PDF in Pinecone
-def store_pdf_in_pinecone(pdf_name, pdf_content):
-    pdf_hash = hashlib.md5(pdf_name.encode()).hexdigest()  # Unique ID
-    index.upsert([(pdf_hash, [0] * 384, {"pdf_name": pdf_name, "text": pdf_content})])
-    st.success(f"✅ {pdf_name} stored in Pinecone.")
+    with open(f"temp_{pdf_name}", "rb") as f:
+        reader = PyPDF2.PdfReader(f)
+        text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
 
-# Process PDF and Store
-if uploaded_file:
-    pdf_text = extract_text_from_pdf(uploaded_file)
-    store_pdf_in_pinecone(pdf_name, pdf_text)
+    # Store in Pinecone
+    index.upsert([(pdf_name, [0] * 384, {"pdf_name": pdf_name, "content": text})])
 
-# Ask a Question
-st.subheader("Ask a Question")
-question = st.text_area("Enter your question (English or Arabic):")
+    st.success(f"✅ {pdf_name} uploaded and stored successfully!")
 
-if st.button("Search"):
-    if "selected_pdf" in st.session_state and st.session_state["selected_pdf"]:
-        query_pdf = st.session_state["selected_pdf"]
-        query_results = index.query(queries=[[0] * 384], top_k=3, include_metadata=True)
-        if query_results and query_results.get('results'):
-            st.subheader(f"🔍 Results from {query_pdf}:")
-            for match in query_results['results'][0]['matches']:
-                st.write(f"📜 {match['metadata']['text']}")
-        else:
-            st.warning("No relevant results found.")
+# Language Selection
+st.subheader("🌍 Choose Input & Response Language")
+input_lang = st.radio("Choose Input Language:", ["English", "Arabic"])
+response_lang = st.radio("Choose Response Language:", ["English", "Arabic"])
+
+# Question Input
+st.subheader("💬 Ask a Legal Question")
+question = st.text_input("Type your question here...")
+
+if st.button("Submit"):
+    if not question:
+        st.warning("⚠️ Please enter a question.")
+    elif "selected_pdf" not in st.session_state:
+        st.warning("⚠️ Please select or upload a PDF.")
     else:
-        st.warning("Please select a PDF from the sidebar.")
+        # Perform Pinecone search
+        search_results = index.query(queries=[[0] * 384], top_k=5, include_metadata=True)
+        response_text = "\n".join(
+            [match["metadata"].get("content", "")[:500] for match in search_results["results"][0]["matches"]]
+        )
+
+        # Display AI response
+        st.subheader("📜 AI-Generated Response")
+        st.write(response_text if response_text else "No relevant legal information found.")
 
