@@ -57,7 +57,7 @@ st.markdown("---")
 
 # PDF Source Selection
 st.subheader("Select PDF Source")
-pdf_source = st.radio("Choose PDF Source:", ["Upload from PC", "Choose from the Document Storage"])
+pdf_source = st.radio("Choose PDF Source:", ["Upload from PC", "Choose from the Document Storage"], key="pdf_source")
 
 # File Upload Section
 if pdf_source == "Upload from PC":
@@ -74,21 +74,22 @@ elif pdf_source == "Choose from the Document Storage":
     total_pdfs = get_stored_pdfs()
     st.write(f"Total PDFs Stored: {total_pdfs}")
     if total_pdfs > 0:
-        st.write("You can search for existing documents.")
+        selected_pdf = st.selectbox("Select a PDF", range(total_pdfs))
+        st.write(f"You selected document: {selected_pdf}")
     else:
         st.warning("No documents available in storage.")
 
 # Language Selection
 st.markdown("---")
 st.subheader("Choose Input Language")
-input_language = st.radio("Select input language:", ["English", "Arabic"], horizontal=True)
+input_language = st.radio("Select input language:", ["English", "Arabic"], horizontal=True, key="input_language")
 
 st.subheader("Choose Response Language")
-response_language = st.radio("Select response language:", ["English", "Arabic"], horizontal=True)
+response_language = st.radio("Select response language:", ["English", "Arabic"], horizontal=True, key="response_language")
 
-# Search Bar
+# Ask a question section
 st.markdown("---")
-st.subheader("Ask a Legal Question")
+st.subheader("Ask a question (in English or Arabic):")
 query = st.text_input("Enter your legal question:")
 if query:
     try:
@@ -103,6 +104,3 @@ if query:
             st.warning("No relevant documents found. Try refining your question.")
     except Exception as e:
         st.error(f"Error retrieving results: {e}")
-
-# Footer (removed as requested)
-# st.write("Developed with ❤️ using Streamlit & Pinecone")
