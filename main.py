@@ -5,12 +5,13 @@ import os
 import re
 from sentence_transformers import SentenceTransformer
 
-# Load Pinecone API Key from Environment Variables
+# Pinecone Configuration
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 INDEX_NAME = "helpdesk"
 
 # Initialize Pinecone
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
+
 index = pc.Index(INDEX_NAME)
 
 # Load Hugging Face Model for Embeddings
@@ -27,8 +28,8 @@ def extract_text_from_pdf(pdf_file):
         st.error(f"Error reading PDF: {e}")
     return text.strip()
 
-def extract_articles(text):
-    """Extracts only articles from the PDF text."""
+def extract_articles(text, pdf_name):
+    """Extracts articles and their metadata from the PDF."""
     articles = []
     article_pattern = re.compile(r"\bArticle\s+(\d+)\b", re.IGNORECASE)
     chapter_pattern = re.compile(r"\bChapter\s+\d+:\s*(.+)", re.IGNORECASE)
@@ -36,7 +37,7 @@ def extract_articles(text):
     lines = text.split("\n")
     current_article = None
     current_chapter = "Unknown Chapter"
-    article_content = ""
+    article_content = []
 
     for line in lines:
         line = line.strip()
@@ -47,69 +48,69 @@ def extract_articles(text):
             current_chapter = chapter_match.group(1).strip()
 
         # Detect Article
-        article_match = article_pattern.search(line)
+        article_match = article_pattern.match(line)
         if article_match:
             if current_article and article_content:
                 articles.append({
                     "article_number": current_article,
                     "chapter_number": current_chapter,
-                    "text": article_content.strip(),
-                    "type": "article"
+                    "text": " ".join(article_content).strip(),
+                    "pdf_name": pdf_name
                 })
-                article_content = ""
+                article_content = []
 
             current_article = article_match.group(1)
-            article_content = line  # Start new article content
+            article_content.append(line)  # Start new article content
 
         elif current_article:
-            article_content += " " + line  # Append content to the current article
+            article_content.append(line)  # Append content to the current article
 
     # Store the last article
     if current_article and article_content:
         articles.append({
             "article_number": current_article,
             "chapter_number": current_chapter,
-            "text": article_content.strip(),
-            "type": "article"
+            "text": " ".join(article_content).strip(),
+            "pdf_name": pdf_name
         })
 
     return articles
 
-def store_articles(articles, pdf_name):
-    """Stores extracted articles in Pinecone."""
-    vector_data = []
-    
-    for i, article in enumerate(articles):
-        article_vector = model.encode(article["text"]).tolist()
-        vector_data.append((
-            f"{pdf_name}-article-{i}", article_vector, {
+def store_articles_in_pinecone(articles):
+    """Stores articles in Pinecone with proper embeddings."""
+    vectors = []
+    for article in articles:
+        article_id = f"{article['pdf_name']}-article-{article['article_number']}"
+        embedding = model.encode(article["text"]).tolist()
+
+        vectors.append({
+            "id": article_id,
+            "values": embedding,
+            "metadata": {
                 "article_number": article["article_number"],
                 "chapter_number": article["chapter_number"],
-                "pdf_name": pdf_name,
+                "pdf_name": article["pdf_name"],
                 "text": article["text"],
-                "type": article["type"]
+                "type": "article"
             }
-        ))
+        })
 
-    if vector_data:
-        index.upsert(vector_data)
-        st.success(f"✅ {len(vector_data)} articles stored in Pinecone from {pdf_name}.")
+    # Store in Pinecone
+    if vectors:
+        index.upsert(vectors)
+        st.success(f"Stored {len(vectors)} articles in Pinecone.")
 
-# Streamlit UI
-st.title("📄 AI-Powered Legal HelpDesk for Saudi Arabia")
+def process_pdf_and_store(pdf_file):
+    """Extracts articles from PDF and stores them in Pinecone."""
+    pdf_name = os.path.basename(pdf_file.name)
+    text = extract_text_from_pdf(pdf_file)
+    articles = extract_articles(text, pdf_name)
+    store_articles_in_pinecone(articles)
 
-# Sidebar for Uploaded PDFs
-st.sidebar.header("Uploaded PDFs")
+# Streamlit File Uploader
+st.title("PDF Article Extractor & Pinecone Storage")
+pdf_file = st.file_uploader("Upload a PDF", type=["pdf"])
 
-# Upload PDF Files
-uploaded_files = st.file_uploader("Upload one or more PDFs", type="pdf", accept_multiple_files=True)
-
-if uploaded_files:
-    for uploaded_file in uploaded_files:
-        with st.spinner(f"Processing {uploaded_file.name}..."):
-            pdf_text = extract_text_from_pdf(uploaded_file)
-            articles = extract_articles(pdf_text)
-            store_articles(articles, uploaded_file.name)
-
-        # Show uploaded file in the sidebar
-        st.sidebar.write(f"✅ {uploaded_file.name} stored!")
+if pdf_file:
+    process_pdf_and_store(pdf_file)
+    st.success("PDF processed and stored successfully in Pinecone!")
