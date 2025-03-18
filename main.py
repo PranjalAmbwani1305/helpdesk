@@ -9,10 +9,8 @@ from sentence_transformers import SentenceTransformer
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 INDEX_NAME = "helpdesk"
 
-
 # Initialize Pinecone
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
-
 index = pc.Index(INDEX_NAME)
 
 # Load Hugging Face Model for Embeddings
@@ -32,29 +30,48 @@ def extract_text_from_pdf(pdf_file):
 def extract_articles(text):
     """Extracts only articles from the PDF text."""
     articles = []
-    article_pattern = re.compile(r"\bArticle\s+\d+\b", re.IGNORECASE)
+    article_pattern = re.compile(r"\bArticle\s+(\d+)\b", re.IGNORECASE)
+    chapter_pattern = re.compile(r"\bChapter\s+\d+:\s*(.+)", re.IGNORECASE)
 
     lines = text.split("\n")
     current_article = None
+    current_chapter = "Unknown Chapter"
     article_content = ""
 
     for line in lines:
         line = line.strip()
-        
-        if article_pattern.search(line):
+
+        # Detect Chapter
+        chapter_match = chapter_pattern.search(line)
+        if chapter_match:
+            current_chapter = chapter_match.group(1).strip()
+
+        # Detect Article
+        article_match = article_pattern.search(line)
+        if article_match:
             if current_article and article_content:
-                articles.append(article_content.strip())
+                articles.append({
+                    "article_number": current_article,
+                    "chapter_number": current_chapter,
+                    "text": article_content.strip(),
+                    "type": "article"
+                })
                 article_content = ""
-            
-            current_article = line
-            article_content = current_article  # Start new article content
+
+            current_article = article_match.group(1)
+            article_content = line  # Start new article content
 
         elif current_article:
             article_content += " " + line  # Append content to the current article
 
-    # Store the last article after finishing the loop
+    # Store the last article
     if current_article and article_content:
-        articles.append(article_content.strip())
+        articles.append({
+            "article_number": current_article,
+            "chapter_number": current_chapter,
+            "text": article_content.strip(),
+            "type": "article"
+        })
 
     return articles
 
@@ -63,11 +80,17 @@ def store_articles(articles, pdf_name):
     vector_data = []
     
     for i, article in enumerate(articles):
-        article_vector = model.encode(article).tolist()
+        article_vector = model.encode(article["text"]).tolist()
         vector_data.append((
-            f"{pdf_name}-article-{i}", article_vector, {"text": article}
+            f"{pdf_name}-article-{i}", article_vector, {
+                "article_number": article["article_number"],
+                "chapter_number": article["chapter_number"],
+                "pdf_name": pdf_name,
+                "text": article["text"],
+                "type": article["type"]
+            }
         ))
-    
+
     if vector_data:
         index.upsert(vector_data)
         st.success(f"✅ {len(vector_data)} articles stored in Pinecone from {pdf_name}.")
