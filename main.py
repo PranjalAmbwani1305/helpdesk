@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 INDEX_NAME = "helpdesk"
 index = pc.Index(INDEX_NAME)
 
