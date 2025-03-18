@@ -33,30 +33,52 @@ def get_stored_pdfs():
     response = index.describe_index_stats()
     return response["total_vector_count"]
 
-# Streamlit UI
-st.title("⚖️ AI-Powered Legal HelpDesk for Saudi Arabia")
+# Streamlit UI Layout
+st.set_page_config(page_title="Legal HelpDesk", page_icon="⚖️", layout="wide")
 
-# Upload PDF
-uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
-if uploaded_file:
-    pdf_text = extract_text_from_pdf(uploaded_file)
-    store_pdf_in_pinecone(uploaded_file.name, pdf_text)
-    st.success(f"✅ {uploaded_file.name} stored in Pinecone!")
+# Header
+st.markdown("<h1 style='text-align: center;'>⚖️ AI-Powered Legal HelpDesk for Saudi Arabia</h1>", unsafe_allow_html=True)
+st.write("Helping you find legal information from Saudi Arabian laws quickly and accurately.")
 
-# Display stored PDFs
-st.subheader("📂 Stored PDFs in Pinecone")
-try:
-    total_pdfs = get_stored_pdfs()
-    st.write(f"Total PDFs Stored: {total_pdfs}")
-except Exception as e:
-    st.error(f"Error fetching stored PDFs: {e}")
+# PDF Source Selection
+st.subheader("📂 Select PDF Source")
+pdf_source = st.radio("", ["Upload from PC", "Choose from the Document Storage"])
 
-# Querying PDFs
-query = st.text_input("🔍 Ask a legal question:")
+# File Upload Section
+if pdf_source == "Upload from PC":
+    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
+    if uploaded_file:
+        pdf_text = extract_text_from_pdf(uploaded_file)
+        store_pdf_in_pinecone(uploaded_file.name, pdf_text)
+        st.success(f"✅ {uploaded_file.name} stored successfully!")
+
+# Stored PDFs Section
+elif pdf_source == "Choose from the Document Storage":
+    st.subheader("📄 Stored Legal Documents")
+    try:
+        total_pdfs = get_stored_pdfs()
+        st.write(f"📄 **Total PDFs Stored:** {total_pdfs}")
+    except Exception as e:
+        st.error(f"Error fetching stored PDFs: {e}")
+
+# Language Selection
+st.subheader("🌍 Choose Input Language")
+input_language = st.radio("", ["English", "Arabic"], horizontal=True)
+
+st.subheader("🌍 Choose Response Language")
+response_language = st.radio("", ["English", "Arabic"], horizontal=True)
+
+# Search Bar
+st.markdown("## 🔍 Ask a question (in English or Arabic)")
+query = st.text_input("Enter your legal question:")
 if query:
     query_vector = embedding_model.encode(query).tolist()
     results = index.query(vector=query_vector, top_k=5, include_metadata=True)
     
-    st.subheader("📜 Relevant Legal Documents:")
+    st.markdown("### 📜 Relevant Legal Documents:")
     for match in results["matches"]:
         st.write(f"📄 {match['metadata']['filename']} (Score: {match['score']:.2f})")
+
+# Footer
+st.markdown("---")
+st.markdown("<p style='text-align: center;'>Developed with ❤️ using Streamlit & Pinecone</p>", unsafe_allow_html=True)
