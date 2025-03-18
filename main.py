@@ -9,8 +9,8 @@ PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 INDEX_NAME = "helpdesk"
 
 # Initialize Pinecone
-pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
-index = pc.Index(INDEX_NAME)
+pinecone.init(api_key=PINECONE_API_KEY)
+index = pinecone.Index(INDEX_NAME)
 
 # Load SentenceTransformer model from Hugging Face
 embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
@@ -35,20 +35,19 @@ def store_pdf_in_pinecone(pdf_name, pdf_text):
         st.error(f"Error storing PDF in Pinecone: {e}")
         return False
 
-# Function to fetch stored PDFs count and their metadata
+# Function to fetch stored PDFs and metadata
 def get_stored_pdfs():
     try:
         response = index.describe_index_stats()
         total_pdfs = response.get("total_vector_count", 0)
         metadata = []
+        
         if total_pdfs > 0:
-            # Get a few document IDs and their metadata
-            fetch_response = index.fetch(ids=[str(i) for i in range(total_pdfs)])  # Fetch metadata of stored PDFs
-            metadata = [
-                {"filename": fetch_response["vectors"][str(i)]["metadata"]["filename"], 
-                 "publisher": fetch_response["vectors"][str(i)]["metadata"].get("publisher", "Unknown")}
-                for i in range(total_pdfs)
-            ]
+            # Get document IDs and metadata, use 'ids' to fetch specific document details
+            ids = [f"{i}" for i in range(total_pdfs)]  # Adjust according to actual IDs you have
+            fetch_response = index.fetch(ids=ids)  # Correctly fetch metadata
+            for id in fetch_response['vectors']:
+                metadata.append(fetch_response['vectors'][id]['metadata'])
         return metadata
     except Exception as e:
         st.error(f"Error fetching stored PDFs: {e}")
@@ -87,7 +86,7 @@ elif pdf_source == "Choose from the Document Storage":
     
     if total_pdfs > 0:
         # Create a dropdown list with filenames (and optionally the publisher)
-        pdf_names = [f"{pdf['filename']} (Publisher: {pdf['publisher']})" for pdf in stored_pdfs]
+        pdf_names = [f"{pdf['filename']} (Publisher: {pdf.get('publisher', 'Unknown')})" for pdf in stored_pdfs]
         selected_pdf = st.selectbox("Select a PDF", pdf_names)
         st.write(f"You selected document: {selected_pdf}")
     else:
