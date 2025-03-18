@@ -8,13 +8,7 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-INDEX_NAME = "legal_helpdesk"
-
-# Initialize Pinecone
-pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
-if INDEX_NAME not in [i.name for i in pc.list_indexes()]:
-    pc.create_index(INDEX_NAME, dimension=384, metric="cosine")
-
+INDEX_NAME = "helpdesk"
 index = pc.Index(INDEX_NAME)
 
 # Load Sentence Transformer Model
