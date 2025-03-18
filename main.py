@@ -29,20 +29,30 @@ def extract_text_from_pdf(pdf_file):
 def store_pdf_in_pinecone(pdf_name, pdf_text):
     try:
         vector = embedding_model.encode(pdf_text).tolist()
-        index.upsert(vectors=[{"id": pdf_name, "values": vector, "metadata": {"filename": pdf_name}}])
+        index.upsert(vectors=[{"id": pdf_name, "values": vector, "metadata": {"filename": pdf_name, "publisher": "Publisher Name"}}])  # Add publisher metadata
         return True
     except Exception as e:
         st.error(f"Error storing PDF in Pinecone: {e}")
         return False
 
-# Function to fetch stored PDFs count
+# Function to fetch stored PDFs count and their metadata
 def get_stored_pdfs():
     try:
         response = index.describe_index_stats()
-        return response.get("total_vector_count", 0)
+        total_pdfs = response.get("total_vector_count", 0)
+        metadata = []
+        if total_pdfs > 0:
+            # Get a few document IDs and their metadata
+            fetch_response = index.fetch(ids=[str(i) for i in range(total_pdfs)])  # Fetch metadata of stored PDFs
+            metadata = [
+                {"filename": fetch_response["vectors"][str(i)]["metadata"]["filename"], 
+                 "publisher": fetch_response["vectors"][str(i)]["metadata"].get("publisher", "Unknown")}
+                for i in range(total_pdfs)
+            ]
+        return metadata
     except Exception as e:
         st.error(f"Error fetching stored PDFs: {e}")
-        return 0
+        return []
 
 # Streamlit UI Layout
 st.set_page_config(page_title="Legal HelpDesk", page_icon="⚖️", layout="wide")
@@ -71,10 +81,14 @@ if pdf_source == "Upload from PC":
 
 elif pdf_source == "Choose from the Document Storage":
     st.subheader("Choose from Stored Legal Documents")
-    total_pdfs = get_stored_pdfs()
+    stored_pdfs = get_stored_pdfs()
+    total_pdfs = len(stored_pdfs)
     st.write(f"Total PDFs Stored: {total_pdfs}")
+    
     if total_pdfs > 0:
-        selected_pdf = st.selectbox("Select a PDF", range(total_pdfs))
+        # Create a dropdown list with filenames (and optionally the publisher)
+        pdf_names = [f"{pdf['filename']} (Publisher: {pdf['publisher']})" for pdf in stored_pdfs]
+        selected_pdf = st.selectbox("Select a PDF", pdf_names)
         st.write(f"You selected document: {selected_pdf}")
     else:
         st.warning("No documents available in storage.")
@@ -99,7 +113,7 @@ if query:
         st.subheader("Relevant Legal Documents:")
         if results["matches"]:
             for match in results["matches"]:
-                st.write(f"📄 **{match['metadata']['filename']}** (Score: {match['score']:.2f})")
+                st.write(f"📄 **{match['metadata']['filename']}** (Publisher: {match['metadata'].get('publisher', 'Unknown')}) (Score: {match['score']:.2f})")
         else:
             st.warning("No relevant documents found. Try refining your question.")
     except Exception as e:
