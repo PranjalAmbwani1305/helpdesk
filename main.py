@@ -10,6 +10,7 @@ PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 INDEX_NAME = "helpdesk"
 
 
+# Initialize Pinecone
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 
 index = pc.Index(INDEX_NAME)
