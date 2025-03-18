@@ -8,9 +8,9 @@ from PyPDF2 import PdfReader
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 INDEX_NAME = "helpdesk"
 
-# Initialize Pinecone
-pinecone.init(api_key=PINECONE_API_KEY, environment="us-west1-gcp")  # Update if needed
-index = pinecone.Index(INDEX_NAME)
+# Initialize Pinecone (NEW FIX)
+pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
+index = pc.Index(INDEX_NAME)
 
 # Load SentenceTransformer model from Hugging Face
 embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
