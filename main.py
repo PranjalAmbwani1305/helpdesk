@@ -12,11 +12,6 @@ PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 # Initialize Pinecone
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 INDEX_NAME = "helpdesk"
-
-# Check if index exists, else create it
-if INDEX_NAME not in pc.list_indexes():
-    pc.create_index(INDEX_NAME, dimension=384)
-
 index = pc.Index(INDEX_NAME)
 
 # Load embedding model
