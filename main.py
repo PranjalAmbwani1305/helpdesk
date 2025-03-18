@@ -1,9 +1,8 @@
 import streamlit as st
 import pinecone
+import fitz  # PyMuPDF for PDF text extraction
+import hashlib
 import os
-import re
-import PyPDF2
-from sentence_transformers import SentenceTransformer
 
 # Pinecone Configuration
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
@@ -13,145 +12,76 @@ INDEX_NAME = "helpdesk"
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index = pc.Index(INDEX_NAME)
 
-
-# Load Embedding Model
-model = SentenceTransformer("all-MiniLM-L6-v2")
-
 # Streamlit UI
-st.set_page_config(page_title="Legal HelpDesk - Saudi Arabia", layout="wide")
+st.title("📜 AI-Powered Legal HelpDesk for Saudi Arabia")
 
-# Sidebar for PDF Storage
+# Sidebar: Show uploaded PDFs
 st.sidebar.title("📂 Uploaded PDFs")
+
 if "uploaded_pdfs" not in st.session_state:
     st.session_state["uploaded_pdfs"] = {}
 
-# File Upload Section
-st.title("🤖 AI-Powered Legal HelpDesk for Saudi Arabia")
-st.write("Upload PDFs and ask legal questions.")
+# Fetch PDFs from Pinecone
+pinecone_docs = set()
+query_results = index.query(queries=[[0] * 384], top_k=50, include_metadata=True)  # Dummy query to fetch stored PDFs
+if query_results and query_results.get('results'):
+    for match in query_results['results'][0]['matches']:
+        pdf_name = match['metadata'].get("pdf_name")
+        if pdf_name:
+            pinecone_docs.add(pdf_name)
 
-pdf_source = st.radio("Select PDF Source:", ["Upload from PC", "Choose from Document Storage"])
+# Combine session PDFs and Pinecone PDFs
+all_pdfs = set(st.session_state["uploaded_pdfs"].keys()).union(pinecone_docs)
 
-uploaded_file = None
-pdf_name = None
+if all_pdfs:
+    selected_pdf = st.sidebar.selectbox("Select a PDF:", list(all_pdfs))
+    st.session_state["selected_pdf"] = selected_pdf
+else:
+    st.sidebar.warning("No PDFs uploaded yet.")
 
-if pdf_source == "Upload from PC":
-    uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"], help="Limit: 200MB per file", accept_multiple_files=False)
-    
-    if uploaded_file:
-        pdf_name = uploaded_file.name
-        if pdf_name not in st.session_state["uploaded_pdfs"]:
-            st.session_state["uploaded_pdfs"][pdf_name] = uploaded_file
+# File Upload
+st.subheader("Upload a PDF")
+uploaded_file = st.file_uploader("Choose a PDF", type="pdf")
 
-elif pdf_source == "Choose from Document Storage":
-    if st.session_state["uploaded_pdfs"]:
-        pdf_name = st.selectbox("Select a previously uploaded PDF:", list(st.session_state["uploaded_pdfs"].keys()))
-        uploaded_file = st.session_state["uploaded_pdfs"][pdf_name]
-    else:
-        st.warning("No PDFs uploaded yet.")
-
-# Language Selection
-st.subheader("🌍 Choose Languages")
-input_language = st.radio("Choose Input Language", ["English", "Arabic"], horizontal=True)
-response_language = st.radio("Choose Response Language", ["English", "Arabic"], horizontal=True)
-
-# Function to Extract Articles
-def extract_articles(text, pdf_name):
-    """Extracts articles and their metadata from the PDF."""
-    articles = []
-    article_pattern = re.compile(r"\bArticle\s+(\d+)\b", re.IGNORECASE)
-    chapter_pattern = re.compile(r"\bChapter\s+\d+:\s*(.+)", re.IGNORECASE)
-
-    lines = text.split("\n")
-    current_article = None
-    current_chapter = "Unknown Chapter"
-    article_content = []
-
-    for line in lines:
-        line = line.strip()
-
-        # Detect Chapter
-        chapter_match = chapter_pattern.search(line)
-        if chapter_match:
-            current_chapter = chapter_match.group(1).strip()
-
-        # Detect Article
-        article_match = article_pattern.match(line)
-        if article_match:
-            if current_article and article_content:
-                articles.append({
-                    "article_number": current_article,
-                    "chapter_number": current_chapter,
-                    "text": " ".join(article_content).strip(),
-                    "pdf_name": pdf_name
-                })
-                article_content = []
-
-            current_article = article_match.group(1)
-            article_content.append(line)
-
-        elif current_article:
-            article_content.append(line)
-
-    # Store the last article
-    if current_article and article_content:
-        articles.append({
-            "article_number": current_article,
-            "chapter_number": current_chapter,
-            "text": " ".join(article_content).strip(),
-            "pdf_name": pdf_name
-        })
-
-    return articles
-
-# Extract Text and Store in Pinecone
 if uploaded_file:
+    pdf_name = uploaded_file.name
+    if pdf_name not in st.session_state["uploaded_pdfs"]:
+        st.session_state["uploaded_pdfs"][pdf_name] = uploaded_file
+        st.sidebar.success(f"📄 {pdf_name} added!")
+
+# Function: Extract Text from PDF
+def extract_text_from_pdf(pdf_file):
     text = ""
-    try:
-        pdf_reader = PyPDF2.PdfReader(uploaded_file)
-        for page in pdf_reader.pages:
-            text += page.extract_text() + "\n"
-    except Exception as e:
-        st.error(f"Error reading PDF: {e}")
+    doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
+    for page in doc:
+        text += page.get_text("text") + "\n"
+    return text.strip()
 
-    articles = extract_articles(text, pdf_name)
+# Store PDF in Pinecone
+def store_pdf_in_pinecone(pdf_name, pdf_content):
+    pdf_hash = hashlib.md5(pdf_name.encode()).hexdigest()  # Unique ID
+    index.upsert([(pdf_hash, [0] * 384, {"pdf_name": pdf_name, "text": pdf_content})])
+    st.success(f"✅ {pdf_name} stored in Pinecone.")
 
-    vectors = []
-    for article in articles:
-        article_id = f"{pdf_name}-article-{article['article_number']}"
-        embedding = model.encode(article["text"]).tolist()
+# Process PDF and Store
+if uploaded_file:
+    pdf_text = extract_text_from_pdf(uploaded_file)
+    store_pdf_in_pinecone(pdf_name, pdf_text)
 
-        vectors.append({
-            "id": article_id,
-            "values": embedding,
-            "metadata": {
-                "article_number": article["article_number"],
-                "chapter_number": article["chapter_number"],
-                "pdf_name": pdf_name,
-                "text": article["text"],
-                "type": "article"
-            }
-        })
+# Ask a Question
+st.subheader("Ask a Question")
+question = st.text_area("Enter your question (English or Arabic):")
 
-    # Store in Pinecone
-    if vectors:
-        index.upsert(vectors)
-        st.success(f"✅ Stored {len(vectors)} articles in Pinecone.")
-
-# Search Query
-st.subheader("🔍 Ask a Legal Question")
-query = st.text_area("Enter your question (English or Arabic):")
-
-if query:
-    query_embedding = model.encode(query).tolist()
-    results = index.query(queries=[query_embedding], top_k=5, include_metadata=True)
-
-    if results and results['results']:
-        for match in results['results'][0]['matches']:
-            metadata = match['metadata']
-            st.markdown(f"### **Article {metadata['article_number']}**")
-            st.markdown(f"📂 **PDF:** {metadata['pdf_name']}")
-            st.markdown(f"📖 **Chapter:** {metadata['chapter_number']}")
-            st.markdown(f"✍ **Text:** {metadata['text']}")
-            st.write("---")
+if st.button("Search"):
+    if "selected_pdf" in st.session_state and st.session_state["selected_pdf"]:
+        query_pdf = st.session_state["selected_pdf"]
+        query_results = index.query(queries=[[0] * 384], top_k=3, include_metadata=True)
+        if query_results and query_results.get('results'):
+            st.subheader(f"🔍 Results from {query_pdf}:")
+            for match in query_results['results'][0]['matches']:
+                st.write(f"📜 {match['metadata']['text']}")
+        else:
+            st.warning("No relevant results found.")
     else:
-        st.warning("No relevant legal articles found.")
+        st.warning("Please select a PDF from the sidebar.")
+
