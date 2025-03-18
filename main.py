@@ -9,7 +9,7 @@ from sentence_transformers import SentenceTransformer
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 INDEX_NAME = "helpdesk"
 
-
+# Initialize Pinecone
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index = pc.Index(INDEX_NAME)
 
@@ -23,7 +23,7 @@ st.set_page_config(page_title="Legal HelpDesk - Saudi Arabia", layout="wide")
 # Sidebar for PDF Storage
 st.sidebar.title("📂 Uploaded PDFs")
 if "uploaded_pdfs" not in st.session_state:
-    st.session_state["uploaded_pdfs"] = []
+    st.session_state["uploaded_pdfs"] = {}
 
 # File Upload Section
 st.title("🤖 AI-Powered Legal HelpDesk for Saudi Arabia")
@@ -31,20 +31,23 @@ st.write("Upload PDFs and ask legal questions.")
 
 pdf_source = st.radio("Select PDF Source:", ["Upload from PC", "Choose from Document Storage"])
 
+uploaded_file = None
+pdf_name = None
+
 if pdf_source == "Upload from PC":
     uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"], help="Limit: 200MB per file", accept_multiple_files=False)
     
     if uploaded_file:
         pdf_name = uploaded_file.name
         if pdf_name not in st.session_state["uploaded_pdfs"]:
-            st.session_state["uploaded_pdfs"].append(pdf_name)
+            st.session_state["uploaded_pdfs"][pdf_name] = uploaded_file
 
 elif pdf_source == "Choose from Document Storage":
     if st.session_state["uploaded_pdfs"]:
-        pdf_name = st.selectbox("Select a previously uploaded PDF:", st.session_state["uploaded_pdfs"])
+        pdf_name = st.selectbox("Select a previously uploaded PDF:", list(st.session_state["uploaded_pdfs"].keys()))
+        uploaded_file = st.session_state["uploaded_pdfs"][pdf_name]
     else:
         st.warning("No PDFs uploaded yet.")
-        pdf_name = None
 
 # Language Selection
 st.subheader("🌍 Choose Languages")
