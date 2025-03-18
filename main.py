@@ -1,7 +1,9 @@
-import os
 import streamlit as st
+import os
 import pinecone
-import PyPDF2
+from PyPDF2 import PdfReader
+import hashlib
+from deep_translator import GoogleTranslator
 
 # Pinecone Configuration
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
@@ -11,77 +13,73 @@ INDEX_NAME = "helpdesk"
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index = pc.Index(INDEX_NAME)
 
-# Streamlit UI
+# Function to generate a unique ID for each document
+def generate_pdf_id(pdf_name):
+    return hashlib.md5(pdf_name.encode()).hexdigest()
+
+# Function to upload PDF content to Pinecone
+def upload_pdf_to_pinecone(file_name, file_content):
+    pdf_id = generate_pdf_id(file_name)
+    index.upsert(vectors=[
+        {
+            "id": pdf_id,
+            "values": [0] * 384,  # Dummy vector
+            "metadata": {"file_name": file_name, "content": file_content}
+        }
+    ])
+    return pdf_id
+
+# Function to fetch stored PDFs from Pinecone
+def get_stored_pdfs():
+    try:
+        response = index.query(queries=[[0] * 384], top_k=50, include_metadata=True)
+        return [match["metadata"]["file_name"] for match in response["matches"]]
+    except Exception as e:
+        st.error("Error fetching stored PDFs: " + str(e))
+        return []
+
+# Function for translation
+def translate_text(text, src_lang, target_lang):
+    if src_lang != target_lang:
+        return GoogleTranslator(source=src_lang, target=target_lang).translate(text)
+    return text
+
+# UI Layout
 st.title("📜 AI-Powered Legal HelpDesk for Saudi Arabia")
 
-# Sidebar for Uploaded PDFs
-st.sidebar.title("📂 Uploaded PDFs")
+# Sidebar: Show previously uploaded PDFs
+st.sidebar.header("📁 Uploaded PDFs")
+stored_pdfs = get_stored_pdfs()
+selected_pdf = st.sidebar.selectbox("Select a PDF:", stored_pdfs if stored_pdfs else ["No PDFs uploaded yet"])
 
-# Ensure session state stores PDFs
-if "uploaded_pdfs" not in st.session_state:
-    st.session_state["uploaded_pdfs"] = {}
-
-# Load PDFs stored in Pinecone
-pinecone_docs = set()
-query_results = index.query(queries=[[0] * 384], top_k=50, include_metadata=True)  # Dummy query to fetch stored PDFs
-if query_results and query_results.get('results'):
-    for match in query_results['results'][0]['matches']:
-        pdf_name = match['metadata'].get("pdf_name")
-        if pdf_name:
-            pinecone_docs.add(pdf_name)
-
-# Combine session PDFs and Pinecone PDFs
-all_pdfs = set(st.session_state["uploaded_pdfs"].keys()).union(pinecone_docs)
-
-if all_pdfs:
-    selected_pdf = st.sidebar.selectbox("Select a PDF:", list(all_pdfs))
-    st.session_state["selected_pdf"] = selected_pdf
-else:
-    st.sidebar.warning("No PDFs uploaded yet.")
+# Language Selection
+st.sidebar.header("🌍 Language Settings")
+input_language = st.sidebar.radio("Choose Input Language:", ["English", "Arabic"])
+response_language = st.sidebar.radio("Choose Response Language:", ["English", "Arabic"])
 
 # File Upload Section
 st.subheader("📂 Upload a PDF")
-uploaded_file = st.file_uploader("Choose a PDF file", type=["pdf"])
+uploaded_file = st.file_uploader("Upload a PDF", type=["pdf"])
 
 if uploaded_file:
-    pdf_name = uploaded_file.name
-    st.session_state["uploaded_pdfs"][pdf_name] = uploaded_file
-
-    # Read and store the PDF content
-    with open(f"temp_{pdf_name}", "wb") as f:
-        f.write(uploaded_file.getbuffer())
-
-    with open(f"temp_{pdf_name}", "rb") as f:
-        reader = PyPDF2.PdfReader(f)
-        text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+    pdf_reader = PdfReader(uploaded_file)
+    text_content = "\n".join([page.extract_text() for page in pdf_reader.pages if page.extract_text()])
+    
+    # Translate text if needed
+    translated_text = translate_text(text_content, "en" if input_language == "English" else "ar", "en")
 
     # Store in Pinecone
-    index.upsert([(pdf_name, [0] * 384, {"pdf_name": pdf_name, "content": text})])
+    upload_pdf_to_pinecone(uploaded_file.name, translated_text)
+    st.success(f"✅ {uploaded_file.name} uploaded successfully!")
 
-    st.success(f"✅ {pdf_name} uploaded and stored successfully!")
-
-# Language Selection
-st.subheader("🌍 Choose Input & Response Language")
-input_lang = st.radio("Choose Input Language:", ["English", "Arabic"])
-response_lang = st.radio("Choose Response Language:", ["English", "Arabic"])
-
-# Question Input
-st.subheader("💬 Ask a Legal Question")
-question = st.text_input("Type your question here...")
+# Ask a Question
+st.subheader("❓ Ask a Question")
+question = st.text_area("Enter your question:", "")
 
 if st.button("Submit"):
-    if not question:
-        st.warning("⚠️ Please enter a question.")
-    elif "selected_pdf" not in st.session_state:
-        st.warning("⚠️ Please select or upload a PDF.")
+    if question:
+        translated_question = translate_text(question, "en" if input_language == "English" else "ar", "en")
+        st.write(f"📝 Answer in {response_language}: {translated_question}")  # Placeholder for response
     else:
-        # Perform Pinecone search
-        search_results = index.query(queries=[[0] * 384], top_k=5, include_metadata=True)
-        response_text = "\n".join(
-            [match["metadata"].get("content", "")[:500] for match in search_results["results"][0]["matches"]]
-        )
-
-        # Display AI response
-        st.subheader("📜 AI-Generated Response")
-        st.write(response_text if response_text else "No relevant legal information found.")
+        st.warning("⚠️ Please enter a question!")
 
