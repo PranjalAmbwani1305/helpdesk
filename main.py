@@ -3,19 +3,21 @@ import pinecone
 import streamlit as st
 import tempfile
 import fitz  # PyMuPDF for PDF processing
-import openai  # For LLM-based responses (if needed)
-from sentence_transformers import SentenceTransformer
+from transformers import AutoTokenizer, AutoModel
+import torch
 
 # Load Environment Variables
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 INDEX_NAME = "helpdesk"
 
-# ✅ Initialize Pinecone (NEW SDK)
+# ✅ Initialize Pinecone (New SDK)
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index = pc.Index(INDEX_NAME)
 
-# ✅ Load Embedding Model (for vectorizing PDFs)
-embed_model = SentenceTransformer("all-MiniLM-L6-v2")  # Lightweight model for embeddings
+# ✅ Load Hugging Face Embedding Model
+MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+model = AutoModel.from_pretrained(MODEL_NAME)
 
 # Function to Extract Text from PDF
 def extract_text_from_pdf(pdf_path):
@@ -24,6 +26,13 @@ def extract_text_from_pdf(pdf_path):
         for page in doc:
             text += page.get_text()
     return text
+
+# Function to Generate Embeddings using Hugging Face Model
+def generate_embeddings(text):
+    inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
+    with torch.no_grad():
+        outputs = model(**inputs)
+    return outputs.last_hidden_state.mean(dim=1).squeeze().tolist()  # Mean pooling
 
 # Function to Fetch Stored PDFs from Pinecone
 def get_stored_pdfs():
@@ -53,11 +62,11 @@ def upload_pdf_to_pinecone(uploaded_file):
         pdf_text = extract_text_from_pdf(temp_pdf_path)
 
         # Generate embeddings for PDF text
-        vector = embed_model.encode(pdf_text, convert_to_numpy=True)
+        vector = generate_embeddings(pdf_text)
 
         # Store in Pinecone
         index.upsert(vectors=[
-            {"id": uploaded_file.name, "values": vector.tolist(), "metadata": {"filename": uploaded_file.name}}
+            {"id": uploaded_file.name, "values": vector, "metadata": {"filename": uploaded_file.name}}
         ])
 
         st.success(f"📄 '{uploaded_file.name}' uploaded successfully!")
@@ -66,8 +75,8 @@ def upload_pdf_to_pinecone(uploaded_file):
 
 # Function to Search Pinecone for Similar Documents
 def search_pinecone(query):
-    query_vector = embed_model.encode(query, convert_to_numpy=True)
-    results = index.query(vector=query_vector.tolist(), top_k=5, include_metadata=True)
+    query_vector = generate_embeddings(query)
+    results = index.query(vector=query_vector, top_k=5, include_metadata=True)
 
     response_text = "🔍 **Search Results:**\n"
     for match in results.matches:
