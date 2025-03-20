@@ -30,7 +30,15 @@ def extract_text_from_pdf(pdf_file):
 def store_pdf_in_pinecone(pdf_name, pdf_text):
     try:
         vector = embedding_model.encode(pdf_text).tolist()
-        index.upsert(vectors=[{"id": pdf_name, "values": vector, "metadata": {"filename": pdf_name}}])
+        
+        # Store with metadata (Ensure filename is stored)
+        index.upsert(vectors=[
+            {
+                "id": pdf_name,
+                "values": vector,
+                "metadata": {"filename": pdf_name}  # Ensure filename is stored
+            }
+        ])
         return True
     except Exception as e:
         st.error(f"Error storing PDF in Pinecone: {e}")
@@ -42,12 +50,15 @@ def get_stored_pdf_names():
         response = index.describe_index_stats()
         total_pdfs = response.get("total_vector_count", 0)
         
-        # Fetch all stored items (modify based on your Pinecone structure)
+        # Fetch all stored items (use correct metadata keys)
         query_results = index.query(vector=[0] * 384, top_k=total_pdfs, include_metadata=True)
         
         pdf_names = []
         for match in query_results["matches"]:
-            filename = match["metadata"]["filename"]
+            metadata = match.get("metadata", {})  # Ensure metadata exists
+            
+            # Fetch filename safely
+            filename = metadata.get("filename", "Unknown PDF")  
             
             # Remove file extension (.pdf) and clean URL-like names
             clean_name = re.sub(r'^www\.', '', filename)  # Remove 'www.'
@@ -90,24 +101,3 @@ elif pdf_source == "Choose from the Document Storage":
             st.write(f"📑 {pdf_name}")  # Display each cleaned PDF name
     else:
         st.write("No PDFs stored yet.")
-
-# Language Selection
-st.subheader("Choose Input Language")
-input_language = st.radio("Select input language:", ["English", "Arabic"], horizontal=True)
-
-st.subheader("Choose Response Language")
-response_language = st.radio("Select response language:", ["English", "Arabic"], horizontal=True)
-
-# Search Bar
-st.subheader("Ask a question")
-query = st.text_input("Enter your legal question:")
-if query:
-    try:
-        query_vector = embedding_model.encode(query).tolist()
-        results = index.query(vector=query_vector, top_k=5, include_metadata=True)
-        
-        st.subheader("Relevant Legal Documents:")
-        for match in results["matches"]:
-            st.write(f"📄 {match['metadata']['filename']} (Score: {match['score']:.2f})")
-    except Exception as e:
-        st.error(f"Error retrieving results: {e}")
