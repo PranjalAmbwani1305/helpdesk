@@ -13,7 +13,7 @@ INDEX_NAME = "helpdesk"
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index = pc.Index(INDEX_NAME)
 
-# Load SentenceTransformer model from Hugging Face
+# Load SentenceTransformer model
 embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
 # Function to extract text from PDFs
@@ -29,47 +29,42 @@ def extract_text_from_pdf(pdf_file):
 # Function to store PDF content in Pinecone
 def store_pdf_in_pinecone(pdf_name, pdf_text):
     try:
-        # Chunk the text into manageable pieces (512 tokens per chunk)
-        chunk_size = 512
-        text_chunks = [pdf_text[i:i+chunk_size] for i in range(0, len(pdf_text), chunk_size)]
-
-        vectors = []
-        for i, chunk in enumerate(text_chunks):
-            vector = embedding_model.encode(chunk).tolist()
-            vectors.append({"id": f"{pdf_name}_{i}", "values": vector, "metadata": {"filename": pdf_name}})
-
-        index.upsert(vectors=vectors)
+        vector = embedding_model.encode(pdf_text).tolist()
+        index.upsert(vectors=[{"id": pdf_name, "values": vector, "metadata": {"pdf_name": pdf_name}}])
         return True
     except Exception as e:
         st.error(f"Error storing PDF in Pinecone: {e}")
         return False
 
-# Function to fetch stored PDFs
-def get_stored_pdf_names():
+# Function to fetch stored PDFs from Pinecone
+def get_stored_pdfs():
     try:
         response = index.describe_index_stats()
-        total_pdfs = response.get("total_vector_count", 0)
+        total_vectors = response.get("total_vector_count", 0)
 
-        if total_pdfs == 0:
+        if total_vectors == 0:
             return []
 
-        # Fetch stored document metadata
-        stored_data = index.fetch([f"{INDEX_NAME}-{i}" for i in range(total_pdfs)])
-        pdf_names = []
-
-        for vector_id, metadata in stored_data.get("vectors", {}).items():
-            filename = metadata.get("metadata", {}).get("filename", "").strip()
-
-            if filename:
-                clean_name = re.sub(r'^www\.', '', filename)  # Remove 'www.'
-                clean_name = clean_name.replace(".pdf", "")  # Remove '.pdf'
-                pdf_names.append(clean_name)
-            else:
-                pdf_names.append("Unknown PDF")
+        query_results = index.query(vector=[0] * 384, top_k=total_vectors, include_metadata=True)
+        pdf_names = list(set(match["metadata"].get("pdf_name", "Unknown PDF") for match in query_results["matches"]))
 
         return pdf_names
     except Exception as e:
         st.error(f"Error fetching stored PDFs: {e}")
+        return []
+
+# Function to get stored articles from a selected PDF
+def get_stored_articles(selected_pdf):
+    try:
+        query_results = index.query(vector=[0] * 384, top_k=50, include_metadata=True)
+        articles = [
+            match["metadata"]
+            for match in query_results["matches"]
+            if match["metadata"].get("pdf_name") == selected_pdf
+        ]
+        return articles
+    except Exception as e:
+        st.error(f"Error fetching articles: {e}")
         return []
 
 # Streamlit UI Layout
@@ -80,7 +75,7 @@ st.title("AI-Powered Legal HelpDesk for Saudi Arabia")
 st.write("Helping you find legal information from Saudi Arabian laws quickly and accurately.")
 
 # PDF Source Selection
-st.subheader("Select PDF Source")
+st.subheader("📂 Select PDF Source")
 pdf_source = st.radio("Choose PDF Source:", ["Upload from PC", "Choose from the Document Storage"])
 
 # File Upload Section
@@ -92,35 +87,56 @@ if pdf_source == "Upload from PC":
         if success:
             st.success(f"{uploaded_file.name} stored successfully!")
 
-# Stored PDFs Section
+# Stored PDFs Selection
 elif pdf_source == "Choose from the Document Storage":
-    st.subheader("📁 Stored Legal Documents")
-
-    pdf_names = get_stored_pdf_names()
+    st.subheader("📚 Select a PDF from Pinecone")
+    pdf_names = get_stored_pdfs()
 
     if pdf_names:
-        for name in pdf_names:
-            st.markdown(f"📑 **{name}**")
+        selected_pdf = st.selectbox("Select a PDF", pdf_names)
     else:
         st.info("No PDFs found.")
 
-# Language Selection
-st.subheader("Choose Input Language")
-input_language = st.radio("Select input language:", ["English", "Arabic"], horizontal=True)
+# Choose Input & Response Language
+st.subheader("🗣️ Choose Input & Response Language")
+col1, col2 = st.columns(2)
 
-st.subheader("Choose Response Language")
-response_language = st.radio("Select response language:", ["English", "Arabic"], horizontal=True)
+with col1:
+    input_language = st.radio("Select input language:", ["English", "Arabic"], horizontal=True)
 
-# Search Bar
-st.subheader("Ask a question")
+with col2:
+    response_language = st.radio("Select response language:", ["English", "Arabic"], horizontal=True)
+
+# Fetch and Display Articles for Selected PDF
+if pdf_source == "Choose from the Document Storage" and selected_pdf:
+    st.subheader(f"📑 Available Articles in {selected_pdf}")
+
+    articles = get_stored_articles(selected_pdf)
+    if articles:
+        selected_article = st.selectbox(
+            "Select an Article",
+            [f"Article {a['article_number']} - {a.get('chapter_number', 'Unknown Chapter')}" for a in articles]
+        )
+    else:
+        st.info("No articles found.")
+
+# Question Input
+st.subheader("🔍 Ask a Question")
 query = st.text_input("Enter your legal question:")
 if query:
     try:
         query_vector = embedding_model.encode(query).tolist()
         results = index.query(vector=query_vector, top_k=5, include_metadata=True)
 
-        st.subheader("Relevant Legal Documents:")
-        for match in results.get("matches", []):
-            st.write(f"📑 {match.get('metadata', {}).get('filename', 'Unknown PDF')} (Score: {match.get('score', 0):.2f})")
+        st.subheader("📖 Relevant Legal Articles:")
+        for match in results["matches"]:
+            metadata = match["metadata"]
+            article_text = metadata.get("text", "No text available")
+            pdf_name = metadata.get("pdf_name", "Unknown PDF")
+
+            st.write(f"📑 **{metadata.get('article_number', 'Unknown Article')}** from **{pdf_name}**")
+            st.write(f"✍ {article_text}")
+            st.write("———")
+
     except Exception as e:
         st.error(f"Error retrieving results: {e}")
