@@ -1,12 +1,13 @@
 import os
 import pinecone
+
 import streamlit as st
 from sentence_transformers import SentenceTransformer
 from PyPDF2 import PdfReader
 
 # 🌍 Initialize Pinecone
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-INDEX_NAME = "saudi-legal-helpdesk"
+INDEX_NAME = "helpdesk"
 
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index = pc.Index(INDEX_NAME)
