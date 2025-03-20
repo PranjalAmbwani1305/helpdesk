@@ -1,7 +1,7 @@
 import os
-import re
 import pinecone
 import streamlit as st
+import re
 from sentence_transformers import SentenceTransformer
 from PyPDF2 import PdfReader
 
@@ -30,41 +30,37 @@ def extract_text_from_pdf(pdf_file):
 def store_pdf_in_pinecone(pdf_name, pdf_text):
     try:
         vector = embedding_model.encode(pdf_text).tolist()
-        
-        # Store with metadata (Ensure filename is stored)
-        index.upsert(vectors=[
-            {
-                "id": pdf_name,
-                "values": vector,
-                "metadata": {"filename": pdf_name}  # Ensure filename is stored
-            }
-        ])
+        index.upsert(vectors=[{"id": pdf_name, "values": vector, "metadata": {"filename": pdf_name}}])
         return True
     except Exception as e:
         st.error(f"Error storing PDF in Pinecone: {e}")
         return False
 
-# Function to fetch and clean stored PDF names
+# Function to fetch stored PDFs
 def get_stored_pdf_names():
     try:
         response = index.describe_index_stats()
         total_pdfs = response.get("total_vector_count", 0)
-        
-        # Fetch all stored items (use correct metadata keys)
+
+        if total_pdfs == 0:
+            return []
+
+        # Query all stored PDFs
         query_results = index.query(vector=[0] * 384, top_k=total_pdfs, include_metadata=True)
-        
+
         pdf_names = []
         for match in query_results["matches"]:
             metadata = match.get("metadata", {})  # Ensure metadata exists
             
             # Fetch filename safely
-            filename = metadata.get("filename", "Unknown PDF")  
-            
-            # Remove file extension (.pdf) and clean URL-like names
-            clean_name = re.sub(r'^www\.', '', filename)  # Remove 'www.'
-            clean_name = clean_name.replace(".pdf", "")   # Remove '.pdf'
-            
-            pdf_names.append(clean_name)
+            filename = metadata.get("filename", "").strip()
+
+            if filename:
+                clean_name = re.sub(r'^www\.', '', filename)  # Remove 'www.'
+                clean_name = clean_name.replace(".pdf", "")  # Remove '.pdf'
+                pdf_names.append(clean_name)
+            else:
+                pdf_names.append("Unknown PDF")
 
         return pdf_names
     except Exception as e:
@@ -94,10 +90,32 @@ if pdf_source == "Upload from PC":
 # Stored PDFs Section
 elif pdf_source == "Choose from the Document Storage":
     st.subheader("📁 Stored Legal Documents")
+
     pdf_names = get_stored_pdf_names()
-    
+
     if pdf_names:
-        for pdf_name in pdf_names:
-            st.write(f"📑 {pdf_name}")  # Display each cleaned PDF name
+        for name in pdf_names:
+            st.markdown(f"📑 **{name}**")
     else:
-        st.write("No PDFs stored yet.")
+        st.info("No PDFs found.")
+
+# Language Selection
+st.subheader("Choose Input Language")
+input_language = st.radio("Select input language:", ["English", "Arabic"], horizontal=True)
+
+st.subheader("Choose Response Language")
+response_language = st.radio("Select response language:", ["English", "Arabic"], horizontal=True)
+
+# Search Bar
+st.subheader("Ask a question")
+query = st.text_input("Enter your legal question:")
+if query:
+    try:
+        query_vector = embedding_model.encode(query).tolist()
+        results = index.query(vector=query_vector, top_k=5, include_metadata=True)
+        
+        st.subheader("Relevant Legal Documents:")
+        for match in results["matches"]:
+            st.write(f"📑 {match['metadata'].get('filename', 'Unknown PDF')} (Score: {match['score']:.2f})")
+    except Exception as e:
+        st.error(f"Error retrieving results: {e}")
