@@ -1,83 +1,71 @@
 import os
-import streamlit as st
 import pinecone
-from PyPDF2 import PdfReader
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import Pinecone
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.document_loaders import PyPDFLoader
+import streamlit as st
+from sentence_transformers import SentenceTransformer
 
-# Initialize Pinecone
+# Load Pinecone API Key and Index Name
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 INDEX_NAME = "helpdesk"
 
+# Initialize Pinecone
 pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 index = pc.Index(INDEX_NAME)
 
-# Load embeddings model
-embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+# Load SentenceTransformer model
+embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
-st.title("📜 Legal HelpDesk for Saudi Arabia")
+# Streamlit UI
+st.title("📖 Legal HelpDesk for Saudi Arabia")
 
-# Select PDF Source
-pdf_source = st.radio("📂 Select PDF Source", ["Upload from PC", "Choose from Document Storage"])
+# Section: Select PDF Source
+st.header("Select PDF Source")
+pdf_source = st.radio("Choose:", ["Upload from PC", "Choose from the Document Storage"])
 
-# Upload PDF
-if pdf_source == "Upload from PC":
-    uploaded_file = st.file_uploader("📤 Upload PDF File", type=["pdf"])
-    
-    if uploaded_file is not None:
-        pdf_reader = PdfReader(uploaded_file)
-        pdf_text = "\n".join([page.extract_text() for page in pdf_reader.pages if page.extract_text()])
-        
-        # Split text into chunks
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-        chunks = text_splitter.split_text(pdf_text)
-        
-        # Store chunks in Pinecone
-        vectors = [{"id": f"{uploaded_file.name}_{i}", "values": embedding_model.embed_query(chunk),
-                    "metadata": {"pdf_name": uploaded_file.name, "text": chunk}} for i, chunk in enumerate(chunks)]
-        
-        index.upsert(vectors)
-        st.success(f"✅ {uploaded_file.name} stored in Pinecone!")
-
-# Select stored PDF from Pinecone
-elif pdf_source == "Choose from Document Storage":
+# PDF Selection (from stored PDFs in Pinecone metadata)
+if pdf_source == "Choose from the Document Storage":
     # Retrieve stored PDFs
-    stored_pdfs = set()
-    results = index.query(vector=[0] * 384, top_k=100, include_metadata=True)
-    for match in results["matches"]:
-        stored_pdfs.add(match["metadata"]["pdf_name"])
+    existing_docs = index.describe_index_stats().get("namespaces", {})
+    available_pdfs = list(existing_docs.keys())
 
-    if stored_pdfs:
-        selected_pdf = st.selectbox("📂 Choose a PDF Document", list(stored_pdfs))
+    if available_pdfs:
+        selected_pdf = st.selectbox("Select a PDF", available_pdfs)
     else:
-        st.warning("⚠️ No PDFs found in storage.")
+        st.warning("⚠️ No PDFs found in the database.")
         selected_pdf = None
 
-# Choose input and response language
-input_lang = st.radio("🌍 Choose Input Language", ["English", "Arabic"], index=0)
-response_lang = st.radio("🌍 Choose Response Language", ["English", "Arabic"], index=0)
+# Language Selection
+st.header("Choose Input Language")
+input_language = st.radio("", ["English", "Arabic"])
 
-# User query input
-query = st.text_input("🔎 Ask a legal question:")
+st.header("Choose Response Language")
+response_language = st.radio("", ["English", "Arabic"])
 
+# User Query Input
+st.header("🔍 Ask a question (in English or Arabic)")
+query = st.text_input("Enter your legal question:")
+
+# Search Button
 if st.button("Search in Legal Database"):
     if not query:
         st.warning("❗ Please enter a question.")
+    elif not selected_pdf:
+        st.warning("⚠️ Please select a PDF from storage.")
     else:
-        # Embed query and search in Pinecone
-        query_embedding = embedding_model.embed_query(query)
-        results = index.query(vector=query_embedding, top_k=3, include_metadata=True)
+        # Embed query and search in Pinecone with filter
+        query_embedding = embedding_model.encode(query).tolist()
+        results = index.query(
+            vector=query_embedding,
+            top_k=3,
+            include_metadata=True,
+            filter={"pdf_name": selected_pdf}  # Ensure results come only from the selected PDF
+        )
 
         if results and results["matches"]:
-            st.success("📖 Found relevant articles:")
+            st.success(f"📖 Found relevant articles from {selected_pdf}:")
             for match in results["matches"]:
                 metadata = match["metadata"]
-                pdf_name = metadata.get("pdf_name", "Unknown PDF")
                 text = metadata.get("text", "No text available.")
-
-                st.markdown(f"### 📌 Article from {pdf_name}")
+                st.markdown(f"### 📌 Article from {selected_pdf}")
                 st.write(text)
         else:
-            st.error("❌ No relevant legal articles found.")
+            st.error("❌ No relevant legal articles found in this document.")
