@@ -2,6 +2,7 @@ import os
 import pinecone
 import streamlit as st
 from sentence_transformers import SentenceTransformer
+from PyPDF2 import PdfReader
 
 # Load Pinecone API Key and Index Name
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
@@ -14,58 +15,53 @@ index = pc.Index(INDEX_NAME)
 # Load SentenceTransformer model
 embedding_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
+# Function to get stored PDF names from Pinecone
+def get_stored_pdfs():
+    try:
+        results = index.describe_index_stats()
+        if "namespaces" in results:
+            return list(results["namespaces"].keys())
+        return []
+    except Exception as e:
+        st.error(f"Error fetching PDFs from Pinecone: {e}")
+        return []
+
 # Streamlit UI
 st.title("📖 Legal HelpDesk for Saudi Arabia")
 
 # Section: Select PDF Source
-st.header("Select PDF Source")
-pdf_source = st.radio("Choose a source:", ["Upload from PC", "Choose from the Document Storage"], key="pdf_source")
+st.header("📑 Select PDF Source")
 
-# PDF Selection (from stored PDFs in Pinecone metadata)
-selected_pdf = None
-if pdf_source == "Choose from the Document Storage":
-    # Retrieve stored PDFs
-    existing_docs = index.describe_index_stats().get("namespaces", {})
-    available_pdfs = list(existing_docs.keys())
+pdf_source = st.radio("Choose a source:", ["Upload from PC", "Choose from the Document Storage"])
 
-    if available_pdfs:
-        selected_pdf = st.selectbox("📂 Select a PDF:", available_pdfs, key="pdf_select")
+if pdf_source == "Upload from PC":
+    uploaded_file = st.file_uploader("Upload a PDF", type="pdf", help="Limit: 200MB per file")
+    
+    if uploaded_file:
+        st.success(f"Uploaded: {uploaded_file.name}")
+        # Process the uploaded file (Extract and store in Pinecone)
+
+elif pdf_source == "Choose from the Document Storage":
+    # Fetch stored PDFs from Pinecone
+    stored_pdfs = get_stored_pdfs()
+    
+    if stored_pdfs:
+        selected_pdf = st.selectbox("Select a PDF", stored_pdfs)
+        st.success(f"Selected: {selected_pdf}")
     else:
-        st.warning("⚠️ No PDFs found in the database.")
+        st.warning("No PDFs found in storage.")
 
-# Language Selection
-st.header("Choose Input Language")
-input_language = st.radio("📥 Input Language:", ["English", "Arabic"], key="input_lang")
+# Choose Input & Response Language
+st.header("🌐 Language Settings")
+input_language = st.radio("Choose Input Language:", ["English", "Arabic"])
+response_language = st.radio("Choose Response Language:", ["English", "Arabic"])
 
-st.header("Choose Response Language")
-response_language = st.radio("📤 Response Language:", ["English", "Arabic"], key="response_lang")
+# Ask Question
+st.header("💬 Ask a Question")
+question = st.text_input("Enter your question (in English or Arabic):")
 
-# User Query Input
-st.header("🔍 Ask a question")
-query = st.text_input("Enter your legal question:", key="user_query")
-
-# Search Button
-if st.button("Search in Legal Database", key="search_btn"):
-    if not query:
-        st.warning("❗ Please enter a question.")
-    elif not selected_pdf:
-        st.warning("⚠️ Please select a PDF from storage.")
+if st.button("Submit"):
+    if question:
+        st.write(f"Searching for answers related to: **{question}**")
     else:
-        # Embed query and search in Pinecone with filter
-        query_embedding = embedding_model.encode(query).tolist()
-        results = index.query(
-            vector=query_embedding,
-            top_k=3,
-            include_metadata=True,
-            filter={"pdf_name": selected_pdf}  # Ensure results come only from the selected PDF
-        )
-
-        if results and results["matches"]:
-            st.success(f"📖 Found relevant articles from {selected_pdf}:")
-            for match in results["matches"]:
-                metadata = match["metadata"]
-                text = metadata.get("text", "No text available.")
-                st.markdown(f"### 📌 Article from {selected_pdf}")
-                st.write(text)
-        else:
-            st.error("❌ No relevant legal articles found in this document.")
+        st.warning("Please enter a question before submitting.")
